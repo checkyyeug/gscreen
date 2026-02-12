@@ -14,6 +14,9 @@ A lightweight photo and video slideshow application that displays media from Goo
 - Auto-sync with Google Drive (configurable interval)
 - Supports images: JPG, PNG, GIF, BMP, WebP, TIFF, and more
 - Supports videos: MP4, AVI, MOV, MKV, WebM
+- Optional audio playback for videos (via ffmpeg)
+- Software display rotation (0°, 90°, 180°, 270°)
+- Configurable status bar with orientation-based layouts
 - Auto-start on boot via systemd service
 - Low CPU usage, suitable for 24/7 operation
 
@@ -159,12 +162,8 @@ sudo journalctl -u gscreen -f
 
 ### Audio Configuration
 
-To enable audio for video playback, install ffmpeg:
-```bash
-sudo apt install ffmpeg
-```
+Audio support is included in the installation script (via ffmpeg). To enable audio for video playback, configure in settings.json:
 
-Then configure audio in settings.json:
 ```json
 "audio": {
     "enabled": true,
@@ -176,6 +175,38 @@ Then configure audio in settings.json:
 **Audio devices:**
 - `hdmi` - Output audio through HDMI (default)
 - `local` - Output audio through 3.5mm jack
+
+**Note:** If you ran install.sh before audio support was added, install ffmpeg manually:
+```bash
+sudo apt install ffmpeg
+```
+
+### Status Bar Layout Configuration
+
+The status bar layout can be customized for different orientations. Configure in settings.json:
+
+```json
+"statusbar_layout": {
+    "opacity": 0.3,
+    "landscape": {
+        "file_info_position": "top",
+        "system_info_position": "bottom",
+        "progress_position": "bottom"
+    },
+    "portrait": {
+        "file_info_position": "bottom",
+        "system_info_position": "top",
+        "progress_position": "top"
+    }
+}
+```
+
+**Position options:** `top` or `bottom`
+
+**Content sections:**
+- `file_info` - File name, date, size, format, dimensions (displayed on left)
+- `system_info` - Resolution, rotation, WiFi, time, total count (displayed on right)
+- `progress` - Current/total count and countdown (displayed in center)
 
 ### Status Bar Information
 
@@ -328,8 +359,10 @@ Note: Keyboard input requires a USB keyboard connected directly to the Pi.
 ## Technical Details
 
 This application uses:
-- **SDL 2** with auto-detected driver (x11 or fbcon)
-- **Pygame** for image rendering
+- **SDL 2** with auto-detected driver (KMSDRM, fbcon, or x11)
+- **pygame-ce** for image and video rendering
+- **OpenCV** for video frame decoding
+- **ffmpeg/ffplay** for audio playback (when enabled)
 - **Pillow** for image processing
 - **gdown** or manual requests for Google Drive downloads
 
