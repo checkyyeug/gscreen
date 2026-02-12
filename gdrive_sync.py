@@ -158,10 +158,16 @@ class GoogleDriveSync:
     def _sync_system_time(self):
         """Sync system time using NTP"""
         import subprocess
+        logger.info(f"[TimeSync] Starting time sync (UTC+{self.timezone_offset})...")
+
         try:
             # Use timedatectl to sync time with NTP
-            logger.info(f"Syncing system time (UTC+{self.timezone_offset})...")
-            subprocess.run(['timedatectl', 'set-ntp', 'true'], check=True, capture_output=True)
+            logger.info("[TimeSync] Using timedatectl for NTP sync...")
+            result = subprocess.run(['timedatectl', 'set-ntp', 'true'], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info("[TimeSync] NTP enabled via timedatectl")
+            else:
+                logger.warning(f"[TimeSync] timedatectl set-ntp failed: {result.stderr}")
 
             # Set timezone if needed
             tz_map = {
@@ -191,39 +197,67 @@ class GoogleDriveSync:
             # Use common timezone if available, otherwise use GMT
             tz = common_tz.get(self.timezone_offset, tz_map.get(self.timezone_offset, 'Etc/UTC'))
 
-            subprocess.run(['timedatectl', 'set-timezone', tz], check=True, capture_output=True)
-            logger.info(f"Timezone set to {tz} (UTC+{self.timezone_offset})")
+            logger.info(f"[TimeSync] Setting timezone to {tz} (UTC+{self.timezone_offset})...")
+            result = subprocess.run(['timedatectl', 'set-timezone', tz], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info(f"[TimeSync] Timezone set to {tz} (UTC+{self.timezone_offset})")
+                # Show current time after sync
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                logger.info(f"[TimeSync] Current system time: {current_time}")
+            else:
+                logger.warning(f"[TimeSync] Failed to set timezone: {result.stderr}")
+
         except FileNotFoundError:
             # timedatectl not available, try using ntpdate
+            logger.warning("[TimeSync] timedatectl not found, trying ntpdate...")
             try:
-                logger.info("timedatectl not available, trying ntpdate...")
-                subprocess.run(['ntpdate', '-u', 'pool.ntp.org'], capture_output=True, timeout=30)
-                logger.info("System time synced via ntpdate")
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                # ntpdate not available, try using Python NTP
+                logger.info("[TimeSync] Syncing time via ntpdate...")
+                result = subprocess.run(['ntpdate', '-u', 'pool.ntp.org'], capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    logger.info(f"[TimeSync] ntpdate sync successful: {result.stdout.strip()}")
+                else:
+                    logger.warning(f"[TimeSync] ntpdate failed: {result.stderr}")
+            except FileNotFoundError:
+                logger.warning("[TimeSync] ntpdate not found, trying Python NTP...")
+                self._sync_time_via_ntp()
+            except subprocess.TimeoutExpired:
+                logger.warning("[TimeSync] ntpdate timed out, trying Python NTP...")
                 self._sync_time_via_ntp()
         except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to sync time with timedatectl: {e}")
+            logger.warning(f"[TimeSync] timedatectl command failed: {e}")
             self._sync_time_via_ntp()
         except Exception as e:
-            logger.warning(f"Failed to sync system time: {e}")
+            logger.warning(f"[TimeSync] Failed to sync system time: {e}")
 
     def _sync_time_via_ntp(self):
         """Sync system time using Python NTP client"""
+        logger.info("[TimeSync] Using Python ntplib for NTP sync...")
         try:
             import ntplib
+            logger.info("[TimeSync] Connecting to pool.ntp.org...")
             ntp_client = ntplib.NTPClient()
-            response = ntp_client.request('pool.ntp.org', version=3)
-            ntp_time = datetime.fromtimestamp(response.tx_time)
+            response = ntp_client.request('pool.ntp.org', version=3, timeout=10)
 
-            # Set system time using date command
+            ntp_time = datetime.fromtimestamp(response.tx_time)
             time_str = ntp_time.strftime('%Y-%m-%d %H:%M:%S')
-            subprocess.run(['sudo', 'date', '-s', time_str], capture_output=True)
-            logger.info(f"System time synced via NTP: {time_str}")
+            offset_ms = round(response.offset * 1000)
+
+            logger.info(f"[TimeSync] NTP time: {time_str}, offset: {offset_ms}ms")
+
+            # Set system time using date command (requires sudo)
+            logger.info(f"[TimeSync] Setting system time to {time_str}...")
+            result = subprocess.run(['sudo', 'date', '-s', time_str], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info(f"[TimeSync] System time synced via NTP: {time_str}")
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                logger.info(f"[TimeSync] Current system time: {current_time}")
+            else:
+                logger.warning(f"[TimeSync] Failed to set time: {result.stderr}")
         except ImportError:
-            logger.warning("ntplib not available, install with: pip install ntplib")
+            logger.warning("[TimeSync] ntplib not available, install with: pip install ntplib")
+            logger.info("[TimeSync] Skipping time sync (ntplib required)")
         except Exception as e:
-            logger.warning(f"Failed to sync time via NTP: {e}")
+            logger.warning(f"[TimeSync] Failed to sync time via NTP: {type(e).__name__}: {e}")
 
     def _sync_with_rclone_check_only(self) -> bool:
         """
