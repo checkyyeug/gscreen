@@ -79,7 +79,8 @@ def create_default_settings(path: str):
             "borderless": True,
             "background_color": [0, 0, 0],
             "hide_mouse": True,
-            "show_statusbar": True
+            "show_statusbar": True,
+            "statusbar_position": "bottom"
         },
         "slideshow": {
             "interval_seconds": 5,

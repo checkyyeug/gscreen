@@ -45,6 +45,7 @@ class SlideshowDisplay:
         self.bg_color = tuple(self.display_settings['background_color'])
         self.hide_mouse = self.display_settings.get('hide_mouse', True)  # Default: True
         self.show_statusbar = self.display_settings.get('show_statusbar', True)  # Default: True
+        self.statusbar_position = self.display_settings.get('statusbar_position', 'bottom')  # Default: 'bottom'
 
         # Status bar settings
         self.statusbar_height = 30
@@ -152,7 +153,7 @@ class SlideshowDisplay:
                 self.font = pygame.font.Font(None, self.statusbar_font_size)
 
     def _draw_statusbar(self, countdown: float = 0):
-        """Draw status bar at bottom of screen"""
+        """Draw status bar at top or bottom of screen"""
         if not self.show_statusbar or self.screen is None:
             return
 
@@ -161,8 +162,12 @@ class SlideshowDisplay:
         screen_width = self.screen_info.current_w
         screen_height = self.screen_info.current_h
 
-        # Create status bar surface
-        statusbar_y = screen_height - self.statusbar_height
+        # Determine status bar position based on setting
+        if self.statusbar_position == 'top':
+            statusbar_y = 0
+        else:  # 'bottom' or default
+            statusbar_y = screen_height - self.statusbar_height
+
         statusbar_rect = pygame.Rect(0, statusbar_y, screen_width, self.statusbar_height)
 
         # Draw status bar background
@@ -191,9 +196,11 @@ class SlideshowDisplay:
             sync_str = self.last_sync_time.strftime('%H:%M')
             right_texts.append(f"Sync: {sync_str}")
 
+        # Text vertical offset (center in status bar)
+        y_offset = statusbar_y + 2
+
         # Render left text
         x_offset = 10
-        y_offset = statusbar_y + 2
         for text in left_texts:
             surface = self.font.render(text, True, self.statusbar_text_color)
             self.screen.blit(surface, (x_offset, y_offset))
@@ -438,7 +445,15 @@ class SlideshowDisplay:
         Returns: (x, y, width, height)
         """
         # Account for status bar
-        effective_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
+        if self.show_statusbar:
+            if self.statusbar_position == 'top':
+                image_start_y = self.statusbar_height
+            else:  # 'bottom' or default
+                image_start_y = 0
+            effective_height = screen_height - self.statusbar_height
+        else:
+            image_start_y = 0
+            effective_height = screen_height
 
         img_ratio = img_width / img_height
         screen_ratio = screen_width / effective_height
@@ -452,9 +467,9 @@ class SlideshowDisplay:
             new_height = effective_height
             new_width = int(effective_height * img_ratio)
 
-        # Center on screen
+        # Center on screen (accounting for status bar position)
         x = (screen_width - new_width) // 2
-        y = (effective_height - new_height) // 2
+        y = image_start_y + (effective_height - new_height) // 2
 
         return x, y, new_width, new_height
 
@@ -466,7 +481,10 @@ class SlideshowDisplay:
         For fill mode, we return crop coordinates
         """
         # Account for status bar
-        effective_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
+        if self.show_statusbar:
+            effective_height = screen_height - self.statusbar_height
+        else:
+            effective_height = screen_height
 
         img_ratio = img_width / img_height
         screen_ratio = screen_width / effective_height
@@ -493,6 +511,18 @@ class SlideshowDisplay:
             self.current_image_path = image_path
             self.current_image_info = self._get_file_info(image_path)
 
+            # Determine image display area based on status bar position
+            if self.show_statusbar:
+                if self.statusbar_position == 'top':
+                    image_display_y = self.statusbar_height
+                    image_display_height = self.screen_info.current_h - self.statusbar_height
+                else:  # 'bottom' or default
+                    image_display_y = 0
+                    image_display_height = self.screen_info.current_h - self.statusbar_height
+            else:
+                image_display_y = 0
+                image_display_height = self.screen_info.current_h
+
             # Use PIL for better image loading
             if Image is not None:
                 pil_image = Image.open(image_path)
@@ -513,7 +543,7 @@ class SlideshowDisplay:
                     # Resize and place
                     pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
                     # Create background and paste
-                    background = Image.new('RGB', (screen_width, screen_height - (self.statusbar_height if self.show_statusbar else 0)), self.bg_color)
+                    background = Image.new('RGB', (screen_width, image_display_height), self.bg_color)
                     background.paste(pil_image, (x, y))
                     pil_image = background
                 elif self.scale_mode == 'fill':
@@ -522,11 +552,9 @@ class SlideshowDisplay:
                         img_width, img_height, screen_width, screen_height
                     )
                     pil_image = pil_image.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
-                    target_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
-                    pil_image = pil_image.resize((screen_width, target_height), Image.Resampling.LANCZOS)
+                    pil_image = pil_image.resize((screen_width, image_display_height), Image.Resampling.LANCZOS)
                 else:  # stretch
-                    target_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
-                    pil_image = pil_image.resize((screen_width, target_height), Image.Resampling.LANCZOS)
+                    pil_image = pil_image.resize((screen_width, image_display_height), Image.Resampling.LANCZOS)
 
                 # Convert to pygame surface
                 img_surface = pygame.image.fromstring(
@@ -538,17 +566,14 @@ class SlideshowDisplay:
                 # Fallback to pygame only
                 img_surface = pygame.image.load(str(image_path))
                 screen_width = self.screen_info.current_w
-                screen_height = self.screen_info.current_h
-
-                target_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
                 img_surface = pygame.transform.scale(
                     img_surface,
-                    (screen_width, target_height)
+                    (screen_width, image_display_height)
                 )
 
             # Display
             self.screen.fill(self.bg_color)
-            self.screen.blit(img_surface, (0, 0))
+            self.screen.blit(img_surface, (0, image_display_y))
 
             # Draw status bar
             self._draw_statusbar()
