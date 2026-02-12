@@ -54,6 +54,7 @@ sudo apt install -y \
     libxvidcore-dev \
     libx264-dev \
     libatlas-base-dev \
+    ffmpeg \
     git
 
 # Create virtual environment
@@ -128,6 +129,11 @@ echo "Display mode will be auto-detected:"
 echo "  - With desktop: Uses X11"
 echo "  - Without desktop: Uses framebuffer (fbcon)"
 echo ""
+echo "Features installed:"
+echo "  - Image and video playback (via pygame/OpenCV)"
+echo "  - Audio support for videos (via ffplay)"
+echo "  - Google Drive sync"
+echo ""
 echo "To run gScreen:"
 echo "  ./run.sh"
 echo ""
@@ -137,5 +143,6 @@ echo ""
 echo "Next steps:"
 echo "1. Log out and log back in (for video group)"
 echo "2. Edit settings.json and add your Google Drive URL"
-echo "3. Run: ./run.sh"
+echo "3. (Optional) Enable audio in settings.json: audio.enabled = true"
+echo "4. Run: ./run.sh"
 echo ""
