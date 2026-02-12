@@ -942,6 +942,10 @@ class SlideshowDisplay:
             screen_width = self.virt_width
             screen_height = self.virt_height
 
+            # Use virtual screen dimensions for software rotation mode
+            screen_width = self.virt_width
+            screen_height = self.virt_height
+
             # Check cache first
             cached_surface = self._get_cached_image(image_path, screen_width, screen_height)
             if cached_surface is not None:
@@ -949,59 +953,56 @@ class SlideshowDisplay:
                 logger.debug(f"Using cached image: {image_path.name}")
             else:
                 # Use PIL for better image loading
-            if Image is not None:
-                pil_image = Image.open(image_path)
+                if Image is not None:
+                    pil_image = Image.open(image_path)
 
-                # Convert to RGB if necessary
-                if pil_image.mode != 'RGB':
-                    pil_image = pil_image.convert('RGB')
+                    # Convert to RGB if necessary
+                    if pil_image.mode != 'RGB':
+                        pil_image = pil_image.convert('RGB')
 
-                img_width, img_height = pil_image.size
-                # Use virtual screen dimensions for software rotation mode
-                screen_width = self.virt_width
-                screen_height = self.virt_height
+                    img_width, img_height = pil_image.size
 
-                # Calculate dimensions based on scale mode
-                if self.scale_mode == 'fit':
-                    x, y, new_width, new_height = self.calculate_fit_size(
-                        img_width, img_height, screen_width, screen_height
+                    # Calculate dimensions based on scale mode
+                    if self.scale_mode == 'fit':
+                        x, y, new_width, new_height = self.calculate_fit_size(
+                            img_width, img_height, screen_width, screen_height
+                        )
+                        # Resize and place
+                        pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                        # Create background and paste
+                        background = Image.new('RGB', (screen_width, screen_height), self.bg_color)
+                        background.paste(pil_image, (x, y))
+                        pil_image = background
+                    elif self.scale_mode == 'fill':
+                        # Fill mode - crop to fill screen
+                        crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
+                            img_width, img_height, screen_width, screen_height
+                        )
+                        pil_image = pil_image.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
+                        pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+                    else:  # stretch
+                        pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+
+                    # Convert to pygame surface
+                    img_surface = pg.image.fromstring(
+                        pil_image.tobytes(),
+                        pil_image.size,
+                        pil_image.mode
                     )
-                    # Resize and place
-                    pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                    # Create background and paste
-                    background = Image.new('RGB', (screen_width, screen_height), self.bg_color)
-                    background.paste(pil_image, (x, y))
-                    pil_image = background
-                elif self.scale_mode == 'fill':
-                    # Fill mode - crop to fill screen
-                    crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
-                        img_width, img_height, screen_width, screen_height
+                    # Cache the result
+                    self._cache_image(image_path, screen_width, screen_height, img_surface)
+                else:
+                    # Fallback to pygame only
+                    img_surface = pg.image.load(str(image_path))
+                    # Use virtual screen dimensions
+                    screen_width = self.virt_width
+                    screen_height = self.virt_height
+                    img_surface = pg.transform.scale(
+                        img_surface,
+                        (screen_width, screen_height)
                     )
-                    pil_image = pil_image.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
-                    pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
-                else:  # stretch
-                    pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
-
-                # Convert to pygame surface
-                img_surface = pg.image.fromstring(
-                    pil_image.tobytes(),
-                    pil_image.size,
-                    pil_image.mode
-                )
-                # Cache the result
-                self._cache_image(image_path, screen_width, screen_height, img_surface)
-            else:
-                # Fallback to pygame only
-                img_surface = pg.image.load(str(image_path))
-                # Use virtual screen dimensions
-                screen_width = self.virt_width
-                screen_height = self.virt_height
-                img_surface = pg.transform.scale(
-                    img_surface,
-                    (screen_width, screen_height)
-                )
-                # Cache the result
-                self._cache_image(image_path, screen_width, screen_height, img_surface)
+                    # Cache the result
+                    self._cache_image(image_path, screen_width, screen_height, img_surface)
 
             # Display
             # Determine target screen based on rotation mode
