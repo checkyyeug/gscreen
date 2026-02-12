@@ -12,6 +12,7 @@ import requests
 from pathlib import Path
 from typing import List, Dict
 import subprocess
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,11 +46,10 @@ def get_folder_contents(folder_id: str) -> List[Dict]:
     url = f"https://drive.google.com/drive/folders/{folder_id}"
     params = {'usp': 'sharing'}
 
-    try:
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
+    response = requests.get(url, params=params, timeout=30)
+    response.raise_for_status()
 
-        # Parse HTML to find file entries
+    # Parse HTML to find file entries
         # This is a simplified approach - production code should use proper HTML parsing
         contents = []
 
@@ -67,10 +67,6 @@ def get_folder_contents(folder_id: str) -> List[Dict]:
                 })
 
         return contents
-
-    except Exception as e:
-        logger.error(f"Failed to list folder: {e}")
-        return []
 
 
 def download_with_gdown(folder_url: str, output_dir: str) -> bool:
@@ -115,36 +111,35 @@ def download_with_gdown(folder_url: str, output_dir: str) -> bool:
         return False
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=30)
+)
 def download_file_requests(url: str, dest_path: Path) -> bool:
-    """Download a single file using requests"""
-    try:
-        # Handle Google Drive's warning page for large files
-        session = requests.Session()
-        response = session.get(url, stream=True, timeout=60)
-        response.raise_for_status()
+    """Download a single file using requests with retry"""
+    # Handle Google Drive's warning page for large files
+    session = requests.Session()
+    response = session.get(url, stream=True, timeout=60)
+    response.raise_for_status()
 
-        # Check for virus scan warning page
-        if 'text/html' in response.headers.get('content-type', '') and 'Google Drive' in response.text:
-            # Need to confirm download
-            confirm_match = re.search(r'confirm=([0-9A-Za-z]+)', response.text)
-            if confirm_match:
-                confirm_token = confirm_match.group(1)
-                url = f"{url}&confirm={confirm_token}"
-                response = session.get(url, stream=True, timeout=60)
+    # Check for virus scan warning page
+    if 'text/html' in response.headers.get('content-type', '') and 'Google Drive' in response.text:
+        # Need to confirm download
+        confirm_match = re.search(r'confirm=([0-9A-Za-z]+)', response.text)
+        if confirm_match:
+            confirm_token = confirm_match.group(1)
+            url = f"{url}&confirm={confirm_token}"
+            response = session.get(url, stream=True, timeout=60)
 
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(dest_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+    with open(dest_path, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
 
-        logger.info(f"Downloaded: {dest_path.name}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to download {url}: {e}")
-        return False
+    logger.info(f"Downloaded: {dest_path.name}")
+    return True
 
 
 def main():

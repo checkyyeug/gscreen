@@ -17,6 +17,7 @@ import datetime
 import re
 from pathlib import Path
 from typing import Optional, Tuple, List
+from contextlib import contextmanager
 import random
 
 # Don't import pygame yet - we need to set SDL_VIDEODRIVER first
@@ -109,6 +110,11 @@ class SlideshowDisplay:
         self.error_message = None  # Current error message to display
         self.was_active_time = True  # Track previous schedule state for countdown
         self.error_message_time = None  # When error message was set
+
+        # Image cache to avoid repeated loading/scaling
+        self._image_cache = {}  # {(path, width, height, scale_mode): surface}
+        self._max_cache_size = 50  # Maximum number of cached images
+        self._cache_access_order = []  # Track access order for LRU eviction
 
         # Current image info
         self.current_image_path = None
@@ -314,6 +320,104 @@ class SlideshowDisplay:
         """Draw status bar at configured positions based on orientation"""
         if self.virtual_screen is None:
             return
+
+    def _render_statusbar_common(self, screen_width: int, screen_height: int, layout: dict,
+                               file_info_pos: str, system_info_pos: str, progress_pos: str,
+                               file_texts: list, sys_texts: list, progress_text: str,
+                               text_spacing: int = 8):
+        """Common status bar rendering logic shared by image and video display"""
+        pg = get_pygame()
+
+        # Helper to create status bar surface
+        def create_statusbar_surface(width, height):
+            s = pg.Surface((width, height), pg.SRCALPHA)
+            alpha = int(self.statusbar_opacity * 255)
+            s.fill((*self.statusbar_bg_color_base, alpha))
+            return s
+
+        # Helper to measure width of texts
+        def measure_texts_width(texts, spacing=text_spacing):
+            width = 0
+            for text in texts:
+                text_surface = self.font.render(text, True, self.statusbar_text_color)
+                width += text_surface.get_width() + spacing
+            return width
+
+        # Helper to draw text on left side of surface
+        def draw_texts_left(surface, texts):
+            y_offset = 2
+            x_offset = 10
+            for text in texts:
+                text_surface = self.font.render(text, True, self.statusbar_text_color)
+                surface.blit(text_surface, (x_offset, y_offset))
+                x_offset += text_surface.get_width() + text_spacing
+
+        # Helper to draw text on right side of surface
+        def draw_texts_right(surface, texts):
+            y_offset = 2
+            x_offset = screen_width - 10
+            for text in texts:
+                text_surface = self.font.render(text, True, self.statusbar_text_color)
+                x_offset -= text_surface.get_width()
+                surface.blit(text_surface, (x_offset, y_offset))
+                x_offset -= text_spacing
+
+        # Helper to draw centered text
+        def draw_text_center(surface, text):
+            text_surface = self.font.render(text, True, self.statusbar_text_color)
+            text_x = (screen_width - text_surface.get_width()) // 2
+            surface.blit(text_surface, (text_x, 2))
+
+        # Collect content for each position (top/bottom)
+        position_content = {'top': {'left': None, 'center': None, 'right': None},
+                         'bottom': {'left': None, 'center': None, 'right': None}}
+
+        position_content[file_info_pos]['left'] = file_texts
+        position_content[system_info_pos]['right'] = sys_texts
+        position_content[progress_pos]['center'] = progress_text
+
+        target = self.virtual_screen if self.rotation_mode == 'software' else self.screen
+
+        # Draw each position
+        for pos in ['top', 'bottom']:
+            content = position_content[pos]
+            if content['left'] is None and content['center'] is None and content['right'] is None:
+                continue
+
+            surface = create_statusbar_surface(screen_width, self.statusbar_height)
+            y = 0 if pos == 'top' else screen_height - self.statusbar_height
+
+            left_width = measure_texts_width(content['left']) if content['left'] else 0
+            right_width = measure_texts_width(content['right']) if content['right'] else 0
+
+            center_width = 0
+            center_x = 0
+            if content['center']:
+                center_surface = self.font.render(content['center'], True, self.statusbar_text_color)
+                center_width = center_surface.get_width()
+                center_x = (screen_width - center_width) // 2
+
+            draw_center = True
+            draw_right = True
+
+            if content['center'] and center_x < left_width + 20:
+                draw_center = False
+            if content['center'] and center_x + center_width > screen_width - right_width - 20:
+                draw_center = False
+            if not draw_center and content['right'] and screen_width - right_width - 10 < left_width + 20:
+                draw_right = False
+
+            if content['left']:
+                draw_texts_left(surface, content['left'])
+            if draw_center and content['center']:
+                draw_text_center(surface, content['center'])
+            if draw_right and content['right']:
+                draw_texts_right(surface, content['right'])
+
+            clear_surface = pg.Surface((screen_width, self.statusbar_height))
+            clear_surface.fill(self.bg_color)
+            target.blit(clear_surface, (0, y))
+            target.blit(surface, (0, y))
 
         # Apply software rotation if needed (must be done even if statusbar is hidden)
         if self.rotation_mode == 'software' and self.rotation in [90, 180, 270]:
@@ -782,6 +886,38 @@ class SlideshowDisplay:
 
         return crop_x, crop_y, crop_width, crop_height
 
+    def _get_cache_key(self, image_path: Path, width: int, height: int) -> tuple:
+        """Generate cache key for an image"""
+        return (str(image_path), width, height, self.scale_mode)
+
+    def _get_cached_image(self, image_path: Path, width: int, height: int):
+        """Get cached image surface if available"""
+        key = self._get_cache_key(image_path, width, height)
+        if key in self._image_cache:
+            # Update access order for LRU
+            if key in self._cache_access_order:
+                self._cache_access_order.remove(key)
+            self._cache_access_order.append(key)
+            return self._image_cache[key]
+        return None
+
+    def _cache_image(self, image_path: Path, width: int, height: int, surface):
+        """Cache an image surface with LRU eviction"""
+        key = self._get_cache_key(image_path, width, height)
+
+        # Evict oldest if cache is full
+        while len(self._image_cache) >= self._max_cache_size:
+            oldest_key = self._cache_access_order.pop(0)
+            del self._image_cache[oldest_key]
+
+        self._image_cache[key] = surface
+        self._cache_access_order.append(key)
+
+    def _clear_image_cache(self):
+        """Clear the image cache (call when settings change)"""
+        self._image_cache.clear()
+        self._cache_access_order.clear()
+
     def display_image(self, image_path: Path) -> bool:
         """Load and display an image"""
         pg = get_pygame()
@@ -790,7 +926,17 @@ class SlideshowDisplay:
             self.current_image_path = image_path
             self.current_image_info = self._get_file_info(image_path)
 
-            # Use PIL for better image loading
+            # Use virtual screen dimensions for software rotation mode
+            screen_width = self.virt_width
+            screen_height = self.virt_height
+
+            # Check cache first
+            cached_surface = self._get_cached_image(image_path, screen_width, screen_height)
+            if cached_surface is not None:
+                img_surface = cached_surface
+                logger.debug(f"Using cached image: {image_path.name}")
+            else:
+                # Use PIL for better image loading
             if Image is not None:
                 pil_image = Image.open(image_path)
 
@@ -830,6 +976,8 @@ class SlideshowDisplay:
                     pil_image.size,
                     pil_image.mode
                 )
+                # Cache the result
+                self._cache_image(image_path, screen_width, screen_height, img_surface)
             else:
                 # Fallback to pygame only
                 img_surface = pg.image.load(str(image_path))
@@ -840,6 +988,8 @@ class SlideshowDisplay:
                     img_surface,
                     (screen_width, screen_height)
                 )
+                # Cache the result
+                self._cache_image(image_path, screen_width, screen_height, img_surface)
 
             # Display
             # Determine target screen based on rotation mode
@@ -934,6 +1084,21 @@ class SlideshowDisplay:
             logger.error(f"Error playing video with audio: {e}")
             return self._display_video_opencv(video_path)
 
+    @contextmanager
+    def _video_capture(self, video_path: Path):
+        """Context manager for cv2.VideoCapture to ensure proper cleanup"""
+        cap = None
+        try:
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                logger.error(f"Failed to open video: {video_path}")
+                yield None
+            else:
+                yield cap
+        finally:
+            if cap is not None:
+                cap.release()
+
     def _display_video_opencv(self, video_path: Path, skip_audio_check: bool = False) -> bool:
         """Load and display a video file using OpenCV (video only)"""
         pg = get_pygame()
@@ -941,137 +1106,130 @@ class SlideshowDisplay:
             logger.error("OpenCV (cv2) is not installed. Install with: pip install opencv-python")
             return False
 
+        # Get video info for status bar
+        if not skip_audio_check:
+            self.current_image_path = video_path
+            self.current_image_info = self._get_video_info(video_path)
+
+        # Video uses full virtual screen (status bar is overlay)
+        video_display_y = 0
+        video_display_height = self.virt_height
+
         try:
-            # Get video info for status bar
-            if not skip_audio_check:
-                self.current_image_path = video_path
-                self.current_image_info = self._get_video_info(video_path)
+            with self._video_capture(video_path) as cap:
+                if cap is None:
+                    return False
 
-            # Video uses full virtual screen (status bar is overlay)
-            video_display_y = 0
-            video_display_height = self.virt_height
+                # Get video properties
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                duration = frame_count / fps if fps > 0 else 0
 
-            # Open video file
-            cap = cv2.VideoCapture(str(video_path))
-            if not cap.isOpened():
-                logger.error(f"Failed to open video: {video_path}")
-                return False
+                # Calculate display dimensions based on scale mode
+                video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            # Get video properties
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            duration = frame_count / fps if fps > 0 else 0
+                if self.scale_mode == 'fit':
+                    x, y, display_width, display_height = self.calculate_fit_size(
+                        video_width, video_height, self.virt_width, video_display_height
+                    )
+                    y += video_display_y  # Adjust for status bar offset
+                elif self.scale_mode == 'fill':
+                    # For fill mode in video, we'll use crop calculation
+                    crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
+                        video_width, video_height, self.virt_width, video_display_height
+                    )
+                    display_width = self.virt_width
+                    display_height = video_display_height
+                    x = 0
+                    y = video_display_y
+                else:  # stretch
+                    display_width = self.virt_width
+                    display_height = video_display_height
+                    x = 0
+                    y = video_display_y
+                    crop_x, crop_y, crop_w, crop_h = 0, 0, video_width, video_height
 
-            # Calculate display dimensions based on scale mode
-            video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                frame_delay = int(1000 / fps) if fps > 0 else 33  # ms between frames
 
-            if self.scale_mode == 'fit':
-                x, y, display_width, display_height = self.calculate_fit_size(
-                    video_width, video_height, self.virt_width, video_display_height
-                )
-                y += video_display_y  # Adjust for status bar offset
-            elif self.scale_mode == 'fill':
-                # For fill mode in video, we'll use crop calculation
-                crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
-                    video_width, video_height, self.virt_width, video_display_height
-                )
-                display_width = self.virt_width
-                display_height = video_display_height
-                x = 0
-                y = video_display_y
-            else:  # stretch
-                display_width = self.virt_width
-                display_height = video_display_height
-                x = 0
-                y = video_display_y
-                crop_x, crop_y, crop_w, crop_h = 0, 0, video_width, video_height
+                logger.info(f"Playing video: {video_path.name} ({video_width}x{video_height} @ {fps:.1f}fps)")
 
-            frame_delay = int(1000 / fps) if fps > 0 else 33  # ms between frames
+                start_time = time.time()
+                frame_start_time = start_time
+                current_frame_idx = 0
 
-            logger.info(f"Playing video: {video_path.name} ({video_width}x{video_height} @ {fps:.1f}fps)")
-
-            start_time = time.time()
-            frame_start_time = start_time
-            current_frame_idx = 0
-
-            while self.running:
-                # Handle events
-                for event in pg.event.get():
-                    if event.type == pg.QUIT:
-                        cap.release()
-                        self.running = False
-                        return False
-                    elif event.type == pg.KEYDOWN:
-                        if event.key == pg.K_ESCAPE:
-                            cap.release()
+                while self.running:
+                    # Handle events
+                    for event in pg.event.get():
+                        if event.type == pg.QUIT:
                             self.running = False
                             return False
-                        elif event.key == pg.K_SPACE:
-                            cap.release()
-                            return True  # Skip to next
-                        elif event.key == pg.K_q:
-                            cap.release()
-                            self.running = False
-                            return False
+                        elif event.type == pg.KEYDOWN:
+                            if event.key == pg.K_ESCAPE:
+                                self.running = False
+                                return False
+                            elif event.key == pg.K_SPACE:
+                                return True  # Skip to next
+                            elif event.key == pg.K_q:
+                                self.running = False
+                                return False
 
-                # Read frame
-                ret, frame = cap.read()
-                if not ret:
-                    # End of video
-                    break
+                    # Read frame
+                    ret, frame = cap.read()
+                    if not ret:
+                        # End of video
+                        break
 
-                # Crop if in fill mode
-                if self.scale_mode == 'fill':
-                    frame = frame[crop_y:crop_y + crop_h, crop_x:crop_x + crop_w]
+                    # Crop if in fill mode
+                    if self.scale_mode == 'fill':
+                        frame = frame[crop_y:crop_y + crop_h, crop_x:crop_x + crop_w]
 
-                # Resize frame
-                if frame.shape[1] != display_width or frame.shape[0] != display_height:
-                    frame = cv2.resize(frame, (display_width, display_height),
-                                       interpolation=cv2.INTER_LINEAR)
+                    # Resize frame
+                    if frame.shape[1] != display_width or frame.shape[0] != display_height:
+                        frame = cv2.resize(frame, (display_width, display_height),
+                                           interpolation=cv2.INTER_LINEAR)
 
-                # Convert BGR to RGB
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # Convert BGR to RGB
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                # Create pygame surface
-                frame_surface = pg.image.frombuffer(
-                    frame_rgb.tobytes(),
-                    (display_width, display_height),
-                    'RGB'
-                )
+                    # Create pygame surface
+                    frame_surface = pg.image.frombuffer(
+                        frame_rgb.tobytes(),
+                        (display_width, display_height),
+                        'RGB'
+                    )
 
-                # Display frame
-                # Determine target screen based on rotation mode
-                if self.rotation_mode == 'software':
-                    target_screen = self.virtual_screen
-                else:
-                    target_screen = self.screen
+                    # Display frame
+                    # Determine target screen based on rotation mode
+                    if self.rotation_mode == 'software':
+                        target_screen = self.virtual_screen
+                    else:
+                        target_screen = self.screen
 
-                target_screen.fill(self.bg_color)
-                target_screen.blit(frame_surface, (x, y))
+                    target_screen.fill(self.bg_color)
+                    target_screen.blit(frame_surface, (x, y))
 
-                # Update status bar with video progress
-                current_time = time.time() - start_time
-                remaining = max(0, duration - current_time)
-                self._draw_statusbar_video(current_time, remaining, duration, current_frame_idx, frame_count)
+                    # Update status bar with video progress
+                    current_time = time.time() - start_time
+                    remaining = max(0, duration - current_time)
+                    self._draw_statusbar_video(current_time, remaining, duration, current_frame_idx, frame_count)
 
-                # Apply software rotation if needed
-                if self.rotation_mode == 'software':
-                    self._apply_rotation_to_screen()
+                    # Apply software rotation if needed
+                    if self.rotation_mode == 'software':
+                        self._apply_rotation_to_screen()
 
-                pg.display.flip()
+                    pg.display.flip()
 
-                current_frame_idx += 1
+                    current_frame_idx += 1
 
-                # Maintain frame rate timing
-                elapsed = (time.time() - frame_start_time) * 1000
-                wait_time = max(1, frame_delay - int(elapsed))
-                time.sleep(wait_time / 1000.0)
-                frame_start_time = time.time()
+                    # Maintain frame rate timing
+                    elapsed = (time.time() - frame_start_time) * 1000
+                    wait_time = max(1, frame_delay - int(elapsed))
+                    time.sleep(wait_time / 1000.0)
+                    frame_start_time = time.time()
 
-            cap.release()
-            logger.info(f"Video playback finished: {video_path.name}")
-            return True
+                logger.info(f"Video playback finished: {video_path.name}")
+                return True
 
         except Exception as e:
             logger.error(f"Error displaying video {video_path}: {e}")

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Set, Dict
 import time
 from datetime import datetime
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Ensure UTF-8 encoding for file operations
 if sys.platform.startswith('linux'):
@@ -87,21 +88,22 @@ class GoogleDriveSync:
                     logger.warning(f"Could not hash {file.name}: {e}")
         return files
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(requests.exceptions.RequestException)
+    )
     def download_file(self, direct_url: str, destination: Path) -> bool:
-        """Download a file from URL to destination"""
-        try:
-            response = requests.get(direct_url, stream=True, timeout=30)
-            response.raise_for_status()
+        """Download a file from URL to destination with retry logic"""
+        response = requests.get(direct_url, stream=True, timeout=30)
+        response.raise_for_status()
 
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with open(destination, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to download {direct_url}: {e}")
-            return False
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with open(destination, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        return True
 
     def get_drive_files(self) -> Dict[str, str]:
         """
