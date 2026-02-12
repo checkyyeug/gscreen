@@ -165,14 +165,36 @@ class GoogleDriveSync:
     def _sync_system_time(self):
         """Sync system time using NTP"""
         import subprocess
+        import sys
         logger.info(f"[TimeSync] Starting time sync (UTC+{self.timezone_offset})...")
+
+        # Check if running as root or with sudo capabilities
+        is_root = os.geteuid() == 0
+        has_tty = sys.stdin.isatty()
+
+        if not is_root:
+            if not has_tty:
+                logger.warning("[TimeSync] Not running as root and no TTY available, skipping system time sync")
+                logger.info("[TimeSync] To enable time sync, add this to /etc/sudoers:")
+                logger.info("[TimeSync]   rpi4 ALL=(ALL) NOPASSWD: /usr/bin/timedatectl, /usr/bin/date")
+                return
+            logger.info("[TimeSync] Not running as root, will try with sudo...")
 
         try:
             # Use timedatectl to sync time with NTP
             logger.info("[TimeSync] Using timedatectl for NTP sync...")
-            result = subprocess.run(['timedatectl', 'set-ntp', 'true'], capture_output=True, text=True, encoding='utf-8')
+            cmd = ['timedatectl', 'set-ntp', 'true']
+            if not is_root:
+                cmd = ['sudo'] + cmd
+
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 logger.info("[TimeSync] NTP enabled via timedatectl")
+            elif "authentication is required" in result.stderr.lower() or "permission denied" in result.stderr.lower():
+                logger.warning("[TimeSync] Authentication required for time sync")
+                logger.info("[TimeSync] To enable auto time sync, add this to /etc/sudoers:")
+                logger.info("[TimeSync]   rpi4 ALL=(ALL) NOPASSWD: /usr/bin/timedatectl, /usr/bin/date")
+                return
             else:
                 logger.warning(f"[TimeSync] timedatectl set-ntp failed: {result.stderr}")
 
@@ -205,7 +227,11 @@ class GoogleDriveSync:
             tz = common_tz.get(self.timezone_offset, tz_map.get(self.timezone_offset, 'Etc/UTC'))
 
             logger.info(f"[TimeSync] Setting timezone to {tz} (UTC+{self.timezone_offset})...")
-            result = subprocess.run(['timedatectl', 'set-timezone', tz], capture_output=True, text=True, encoding='utf-8')
+            cmd = ['timedatectl', 'set-timezone', tz]
+            if not is_root:
+                cmd = ['sudo'] + cmd
+
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 logger.info(f"[TimeSync] Timezone set to {tz} (UTC+{self.timezone_offset})")
                 # Show current time after sync
@@ -219,26 +245,38 @@ class GoogleDriveSync:
             logger.warning("[TimeSync] timedatectl not found, trying ntpdate...")
             try:
                 logger.info("[TimeSync] Syncing time via ntpdate...")
-                result = subprocess.run(['ntpdate', '-u', 'pool.ntp.org'], capture_output=True, text=True, encoding='utf-8', timeout=30)
+                cmd = ['ntpdate', '-u', 'pool.ntp.org']
+                if not is_root:
+                    cmd = ['sudo'] + cmd
+                result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
                 if result.returncode == 0:
                     logger.info(f"[TimeSync] ntpdate sync successful: {result.stdout.strip()}")
                 else:
                     logger.warning(f"[TimeSync] ntpdate failed: {result.stderr}")
             except FileNotFoundError:
                 logger.warning("[TimeSync] ntpdate not found, trying Python NTP...")
-                self._sync_time_via_ntp()
+                self._sync_time_via_ntp(is_root, has_tty)
             except subprocess.TimeoutExpired:
                 logger.warning("[TimeSync] ntpdate timed out, trying Python NTP...")
-                self._sync_time_via_ntp()
+                self._sync_time_via_ntp(is_root, has_tty)
         except subprocess.CalledProcessError as e:
             logger.warning(f"[TimeSync] timedatectl command failed: {e}")
-            self._sync_time_via_ntp()
+            self._sync_time_via_ntp(is_root, has_tty)
         except Exception as e:
             logger.warning(f"[TimeSync] Failed to sync system time: {e}")
 
-    def _sync_time_via_ntp(self):
+    def _sync_time_via_ntp(self, is_root=False, has_tty=False):
         """Sync system time using Python NTP client"""
+        import subprocess
         logger.info("[TimeSync] Using Python ntplib for NTP sync...")
+
+        # Check if we can set time (requires root or passwordless sudo)
+        if not is_root and not has_tty:
+            logger.warning("[TimeSync] Cannot set time without TTY or root access")
+            logger.info("[TimeSync] To enable auto time sync, add this to /etc/sudoers:")
+            logger.info("[TimeSync]   rpi4 ALL=(ALL) NOPASSWD: /usr/bin/date")
+            return
+
         try:
             import ntplib
             logger.info("[TimeSync] Connecting to pool.ntp.org...")
@@ -253,7 +291,11 @@ class GoogleDriveSync:
 
             # Set system time using date command (requires sudo)
             logger.info(f"[TimeSync] Setting system time to {time_str}...")
-            result = subprocess.run(['sudo', 'date', '-s', time_str], capture_output=True, text=True, encoding='utf-8')
+            cmd = ['date', '-s', time_str]
+            if not is_root:
+                cmd = ['sudo'] + cmd
+
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 logger.info(f"[TimeSync] System time synced via NTP: {time_str}")
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
