@@ -1288,6 +1288,7 @@ class SlideshowDisplay:
 
         if not self.images:
             logger.warning("No media files to display even after sync. Please check your Google Drive folder.")
+            self._show_no_media_message()
             return
 
         self.running = True
@@ -1404,6 +1405,105 @@ class SlideshowDisplay:
         # Cleanup
         pg.quit()
         logger.info("Slideshow ended")
+
+    def _show_no_media_message(self):
+        """Display a message when no media files are available and wait for files"""
+        import time
+        pg = get_pygame()
+
+        self._init_font()
+
+        # Create a larger font for the no-media message
+        try:
+            message_font = pg.font.SysFont('DejaVuSans', 32, bold=True)
+        except:
+            message_font = pg.font.Font(None, 48)
+
+        # Screen dimensions
+        screen_width = self.virt_width
+        screen_height = self.virt_height
+
+        # Messages to display
+        messages = [
+            "No Media Files Found",
+            "Waiting for files from Google Drive...",
+            "Press ESC to exit"
+        ]
+
+        # For sync checking
+        from gdrive_sync import GoogleDriveSync
+        sync = GoogleDriveSync()
+        last_sync = time.time()
+        sync_interval = self.settings['sync']['check_interval_minutes'] * 60
+
+        logger.info("Displaying 'no media' message and waiting for files...")
+
+        waiting = True
+        while waiting:
+            try:
+                # Handle events
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
+                        waiting = False
+                    elif event.type == pg.KEYDOWN:
+                        if event.key == pg.K_ESCAPE:
+                            logger.info("ESC pressed, exiting...")
+                            waiting = False
+                        elif event.key == pg.K_r:
+                            # Manual sync trigger
+                            logger.info("Manual sync triggered (R key)")
+                            sync.sync()
+                            # Check for new files
+                            self.images = self.load_images(self.cache_dir)
+                            if self.images:
+                                logger.info(f"Found {len(self.images)} media file(s) after sync")
+                                waiting = False
+                                return  # Exit waiting mode
+
+                # Clear screen with background color
+                if self.virtual_screen:
+                    self.virtual_screen.fill(self.background_color)
+                else:
+                    self.screen.fill(self.background_color)
+
+                # Draw messages centered
+                y_offset = screen_height // 2 - (len(messages) * 50) // 2
+                for msg in messages:
+                    text_surface = message_font.render(msg, True, (200, 200, 200))
+                    text_x = (screen_width - text_surface.get_width()) // 2
+                    if self.virtual_screen:
+                        self.virtual_screen.blit(text_surface, (text_x, y_offset))
+                    else:
+                        self.screen.blit(text_surface, (text_x, y_offset))
+                    y_offset += 50
+
+                # Update display
+                if self.virtual_screen and self.physical_screen:
+                    pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.physical_screen)
+                pg.display.flip()
+
+                # Periodic sync check
+                current_time = time.time()
+                if current_time - last_sync >= sync_interval:
+                    logger.info("Periodic sync check...")
+                    sync.sync()
+                    last_sync = current_time
+                    # Check for new files
+                    self.images = self.load_images(self.cache_dir)
+                    if self.images:
+                        logger.info(f"Found {len(self.images)} media file(s) after sync")
+                        waiting = False
+                        return  # Exit waiting mode and continue to slideshow
+
+                # Small sleep to prevent high CPU usage
+                time.sleep(0.1)
+
+            except KeyboardInterrupt:
+                logger.info("Interrupted by user")
+                waiting = False
+            except Exception as e:
+                logger.error(f"Error in no-media wait mode: {e}", exc_info=True)
+                time.sleep(1)
 
 
 def main():
