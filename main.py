@@ -84,7 +84,9 @@ def create_default_settings(path: str):
             "background_color": [0, 0, 0],
             "hide_mouse": True,
             "show_statusbar": True,
-            "statusbar_position": "bottom"
+            "statusbar_position": "bottom",
+            "rotation": 0,
+            "rotation_mode": "hardware"
         },
         "slideshow": {
             "interval_seconds": 5,

@@ -141,6 +141,8 @@ sudo journalctl -u gscreen -f
 | `display.hide_mouse` | Hide mouse cursor on display | true |
 | `display.show_statusbar` | Show status bar | true |
 | `display.statusbar_position` | Status bar position: "top" or "bottom" | "bottom" |
+| `display.rotation` | Display rotation: 0, 90, 180, or 270 | 0 |
+| `display.rotation_mode` | Rotation method: "hardware" or "software" | "hardware" |
 | `slideshow.interval_seconds` | Time between images | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
 | `sync.check_interval_minutes` | Sync check interval | 1 |
@@ -149,20 +151,68 @@ sudo journalctl -u gscreen -f
 
 ### Status Bar Information
 
-**Left side:**
-- File name
-- Modification date
-- File size
-- File format (JPG, PNG, etc.)
-- Image dimensions
+**Landscape mode (rotation 0° or 180°):**
 
-**Right side:**
-- Screen resolution
-- Current time
-- WiFi signal strength (dBm)
-- Image counter (current/total)
-- Countdown to next image
-- Last Google Drive sync time
+Status bar at **top**:
+- Center: Image progress (current/total) and countdown
+
+Status bar at **bottom**:
+- Left side: File name, date, size, format, dimensions
+- Right side: Resolution, rotation, WiFi, time, total count
+
+**Portrait mode (rotation 90° or 270°):**
+
+Status bar at **top**:
+- Left side: Resolution, WiFi, sync time, total count
+
+Status bar at **bottom**:
+- Right side: Date, time, file name, format, dimensions, progress
+
+**During video playback (portrait mode only):**
+- Progress bar with percentage
+### Display Rotation
+
+For portrait or upside-down displays, you can rotate the output:
+
+```json
+"display": {
+    "rotation": 270,
+    "rotation_mode": "software"
+}
+```
+
+**Rotation values:**
+- `0` - No rotation (default)
+- `90` - Rotate 90° counter-clockwise (portrait mode)
+- `180` - Rotate 180° (upside-down)
+- `270` - Rotate 270° (or 90° clockwise, portrait mode)
+
+**Rotation modes:**
+
+| Mode | Description | Pros | Cons |
+|------|-------------|------|------|
+| `hardware` | Rotate via system config (default) | No CPU overhead, full performance | Requires editing `/boot/firmware/cmdline.txt` |
+| `software` | Rotate via pygame (recommended) | Easy to configure, works immediately | Slight CPU usage, minor performance impact |
+
+**Hardware rotation setup (for KMS/DRM systems):**
+
+Edit `/boot/firmware/cmdline.txt` and add to the end of the line:
+```
+video=HDMI-A-1:270x16   # For HDMI (270° rotation)
+```
+or
+```
+video=DSI-1:270x16     # For DSI/official display
+```
+
+Then reboot:
+```bash
+sudo reboot
+```
+
+**Software rotation setup:**
+
+Simply set `rotation_mode` to `software` in settings.json - no system changes needed!
 
 ## Display Setup on Raspberry Pi
 
