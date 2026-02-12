@@ -121,16 +121,28 @@ class SlideshowDisplay:
         self.current_image_info = {}
 
     def _load_settings(self, path: str) -> dict:
-        """Load settings from JSON file"""
+        """Load and validate settings from JSON file"""
         try:
             with open(path, 'r') as f:
-                return json.load(f)
+                settings = json.load(f)
         except FileNotFoundError:
             logger.error(f"Settings file not found: {path}")
             raise
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in settings file: {e}")
             raise
+
+        # Validate settings
+        try:
+            from config_validation import validate_settings
+            validate_settings(settings)
+        except ImportError:
+            logger.warning("config_validation module not found, skipping validation")
+        except Exception as e:
+            logger.error(f"Configuration validation failed: {e}")
+            raise
+
+        return settings
 
     def _get_wifi_signal(self) -> str:
         """Get WiFi signal strength in dBm"""
