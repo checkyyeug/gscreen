@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Google Drive Sync Module
 Downloads and keeps media in sync with a Google Drive folder
 """
 
 import os
+import sys
 import json
 import hashlib
 import logging
@@ -13,6 +15,11 @@ from pathlib import Path
 from typing import Set, Dict
 import time
 from datetime import datetime
+
+# Ensure UTF-8 encoding for file operations
+if sys.platform.startswith('linux'):
+    import locale
+    locale.setlocale(locale.LC_ALL, 'C.UTF-8')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -117,7 +124,7 @@ class GoogleDriveSync:
             # Try to get file list using gdown
             result = subprocess.run(
                 ['gdown', '--list', f'https://drive.google.com/drive/folders/{self._drive_id}'],
-                capture_output=True, text=True, timeout=60
+                capture_output=True, text=True, encoding='utf-8', timeout=60
             )
 
             if result.returncode == 0:
@@ -163,7 +170,7 @@ class GoogleDriveSync:
         try:
             # Use timedatectl to sync time with NTP
             logger.info("[TimeSync] Using timedatectl for NTP sync...")
-            result = subprocess.run(['timedatectl', 'set-ntp', 'true'], capture_output=True, text=True)
+            result = subprocess.run(['timedatectl', 'set-ntp', 'true'], capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 logger.info("[TimeSync] NTP enabled via timedatectl")
             else:
@@ -198,7 +205,7 @@ class GoogleDriveSync:
             tz = common_tz.get(self.timezone_offset, tz_map.get(self.timezone_offset, 'Etc/UTC'))
 
             logger.info(f"[TimeSync] Setting timezone to {tz} (UTC+{self.timezone_offset})...")
-            result = subprocess.run(['timedatectl', 'set-timezone', tz], capture_output=True, text=True)
+            result = subprocess.run(['timedatectl', 'set-timezone', tz], capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 logger.info(f"[TimeSync] Timezone set to {tz} (UTC+{self.timezone_offset})")
                 # Show current time after sync
@@ -212,7 +219,7 @@ class GoogleDriveSync:
             logger.warning("[TimeSync] timedatectl not found, trying ntpdate...")
             try:
                 logger.info("[TimeSync] Syncing time via ntpdate...")
-                result = subprocess.run(['ntpdate', '-u', 'pool.ntp.org'], capture_output=True, text=True, timeout=30)
+                result = subprocess.run(['ntpdate', '-u', 'pool.ntp.org'], capture_output=True, text=True, encoding='utf-8', timeout=30)
                 if result.returncode == 0:
                     logger.info(f"[TimeSync] ntpdate sync successful: {result.stdout.strip()}")
                 else:
@@ -246,7 +253,7 @@ class GoogleDriveSync:
 
             # Set system time using date command (requires sudo)
             logger.info(f"[TimeSync] Setting system time to {time_str}...")
-            result = subprocess.run(['sudo', 'date', '-s', time_str], capture_output=True, text=True)
+            result = subprocess.run(['sudo', 'date', '-s', time_str], capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 logger.info(f"[TimeSync] System time synced via NTP: {time_str}")
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -276,7 +283,7 @@ class GoogleDriveSync:
                 '-R'
             ]
 
-            result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(list_cmd, capture_output=True, text=True, encoding='utf-8', timeout=60)
 
             if result.returncode != 0:
                 return False
@@ -360,7 +367,7 @@ class GoogleDriveSync:
                         ]
 
                         # For folders, we need to handle differently
-                        dl_result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=300)
+                        dl_result = subprocess.run(download_cmd, capture_output=True, text=True, encoding='utf-8', timeout=300)
 
                         if dl_result.returncode == 0:
                             if is_new:
@@ -510,7 +517,7 @@ class GoogleDriveSync:
                 '-v'  # Verbose to see what's being synced
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=600)
 
             if result.returncode == 0:
                 logger.info("rclone sync completed successfully")
