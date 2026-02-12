@@ -280,7 +280,7 @@ class GoogleDriveSync:
     def _sync_with_gdown(self) -> bool:
         """
         Download using gdown Python module.
-        Downloads to temp directory first, then moves to media directory.
+        First checks file list, then only downloads new or changed files using resume mode.
         """
         import shutil
         try:
@@ -290,100 +290,81 @@ class GoogleDriveSync:
             return False
 
         try:
-            # Create a temp directory for downloads
-            temp_dir = self.cache_dir / '.temp'
-
-            # Remove old temp directory if it exists
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir)
-            temp_dir.mkdir(exist_ok=True)
-
-            # Use gdown Python module to download
-            try:
-                logger.info(f"Downloading from Google Drive to {temp_dir}...")
-                download_folder(
-                    url=f'https://drive.google.com/drive/folders/{self._drive_id}',
-                    output=str(temp_dir),
-                    quiet=False,
-                    use_cookies=False
-                )
-            except Exception as e:
-                logger.warning(f"gdown download error: {e}")
-                return False
-
-            # Get list of files before sync (from media directory)
-            local_files_before = set()
+            # Get list of local files with their sizes
+            local_files = {}  # filename -> (size, mod_time)
             for file in self.cache_dir.iterdir():
                 if file.is_file() and self._is_supported_image(file.name):
-                    local_files_before.add(file.name)
+                    local_files[file.name] = (file.stat().st_size, file.stat().st_mtime)
 
-            # Get list of files downloaded (from temp directory)
-            drive_files = set()
-            for root, dirs, files in os.walk(temp_dir):
-                for file in files:
-                    file_path = Path(root) / file
-                    if file_path.is_file() and self._is_supported_image(file):
-                        drive_files.add(file)
+            # Use gdown with skip_download to get file list without downloading
+            logger.info("Checking Google Drive for new files...")
+            drive_file_info = download_folder(
+                url=f'https://drive.google.com/drive/folders/{self._drive_id}',
+                skip_download=True,
+                use_cookies=False,
+                quiet=True
+            )
 
-            # Remove old temp subdirectories created by gdown
-            for item in temp_dir.iterdir():
-                if item.is_dir():
-                    # Move files from subdirectory to temp root
-                    for file in item.iterdir():
-                        if file.is_file():
-                            shutil.move(str(file), str(temp_dir / file.name))
-                    # Remove the subdirectory
-                    shutil.rmtree(item)
+            if not drive_file_info:
+                logger.info("No files found on Google Drive")
+                return False
 
-            # Now drive_files should be in the root of temp_dir
-            # Get the actual list
-            drive_files = set()
-            for file in temp_dir.iterdir():
-                if file.is_file() and self._is_supported_image(file.name):
-                    drive_files.add(file.name)
+            # Parse drive file info to get filenames and sizes
+            drive_files = {}  # filename -> size
+            for file_obj in drive_file_info:
+                if hasattr(file_obj, 'path'):
+                    filename = Path(file_obj.path).name
+                else:
+                    filename = str(file_obj).split('/')[-1]
 
-            # Find files to delete (in local but not on Drive)
-            files_to_delete = local_files_before - drive_files
+                if not self._is_supported_image(filename):
+                    continue
 
-            # Delete local files that no longer exist on Drive
+                # Get file size if available
+                if hasattr(file_obj, 'size'):
+                    drive_files[filename] = file_obj.size
+                else:
+                    drive_files[filename] = None
+
+            # Determine which files need to be downloaded
+            files_to_download = []
+            for filename, drive_size in drive_files.items():
+                if filename not in local_files:
+                    files_to_download.append(filename)
+                    logger.info(f"Will download new file: {filename}")
+                elif drive_size is not None and local_files[filename][0] != drive_size:
+                    files_to_download.append(filename)
+                    logger.info(f"Will download updated file: {filename}")
+
+            if not files_to_download:
+                logger.info("No new or changed files to download")
+                return True
+
+            # Use resume=True to skip already downloaded files
+            logger.info(f"Downloading {len(files_to_download)} file(s) from Google Drive...")
+            download_folder(
+                url=f'https://drive.google.com/drive/folders/{self._drive_id}',
+                output=str(self.cache_dir),
+                quiet=False,
+                use_cookies=False,
+                resume=True  # Skip existing files
+            )
+
+            # Count results
+            added_count = len([f for f in files_to_download if f not in local_files])
+            updated_count = len(files_to_download) - added_count
+
+            # Check for deleted files
+            local_filenames = set(local_files.keys())
+            drive_filenames = set(drive_files.keys())
             deleted_count = 0
-            for filename in files_to_delete:
+            for filename in local_filenames - drive_filenames:
                 try:
-                    file_path = self.cache_dir / filename
-                    if file_path.exists():
-                        file_path.unlink()
-                        logger.info(f"Deleted: {filename} (removed from Drive)")
-                        deleted_count += 1
+                    (self.cache_dir / filename).unlink()
+                    logger.info(f"Deleted: {filename}")
+                    deleted_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to delete {filename}: {e}")
-
-            # Move new/updated files from temp to media directory
-            added_count = 0
-            updated_count = 0
-            for filename in drive_files:
-                temp_file = temp_dir / filename
-                local_file = self.cache_dir / filename
-
-                if not local_file.exists():
-                    # New file
-                    shutil.move(str(temp_file), str(local_file))
-                    added_count += 1
-                    logger.info(f"Added: {filename}")
-                else:
-                    # File exists, check if it's different (by size and modification time)
-                    temp_size = temp_file.stat().st_size
-                    local_size = local_file.stat().st_size
-
-                    if temp_size != local_size:
-                        shutil.move(str(temp_file), str(local_file))
-                        updated_count += 1
-                        logger.info(f"Updated: {filename}")
-                    else:
-                        # Same file, remove temp copy
-                        temp_file.unlink()
-
-            # Clean up temp directory
-            shutil.rmtree(temp_dir)
 
             total_changes = added_count + updated_count + deleted_count
             if total_changes > 0:
@@ -395,12 +376,6 @@ class GoogleDriveSync:
 
         except Exception as e:
             logger.error(f"Sync error: {e}")
-            # Clean up temp directory on error
-            try:
-                if 'temp_dir' in locals() and temp_dir.exists():
-                    shutil.rmtree(temp_dir)
-            except:
-                pass
             return False
 
     def sync_with_rclone(self) -> bool:
