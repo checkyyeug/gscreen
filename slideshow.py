@@ -46,6 +46,24 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ============= Constants =============
+DEFAULT_STATUSBAR_HEIGHT = 30
+DEFAULT_STATUSBAR_FONT_SIZE = 14
+DEFAULT_STATUSBAR_OPACITY = 0.3
+DEFAULT_IMAGE_CACHE_SIZE = 50
+DEFAULT_IMAGE_CACHE_MEMORY_MB = 100
+VIDEO_FPS_DELAY_MS = 33  # Default frame delay for 30fps
+NETWORK_TIMEOUT_SECONDS = 30
+NETWORK_RETRY_ATTEMPTS = 3
+NETWORK_RETRY_MIN_WAIT = 2
+NETWORK_RETRY_MAX_WAIT = 30
+
+# Day abbreviations for validation
+VALID_DAYS = {'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'}
+VALID_SCALE_MODES = {'fit', 'fill', 'stretch'}
+VALID_ROTATIONS = {0, 90, 180, 270}
+VALID_ROTATION_MODES = {'hardware', 'software'}
+VALID_AUDIO_DEVICES = {'hdmi', 'local'}
 
 class SlideshowDisplay:
     """Fullscreen slideshow display for HDMI output with status bar"""
