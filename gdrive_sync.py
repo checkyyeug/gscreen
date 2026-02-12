@@ -302,7 +302,7 @@ class GoogleDriveSync:
             try:
                 logger.info(f"Downloading from Google Drive to {temp_dir}...")
                 download_folder(
-                    f'https://drive.google.com/drive/folders/{self._drive_id}',
+                    url=f'https://drive.google.com/drive/folders/{self._drive_id}',
                     output=str(temp_dir),
                     quiet=False,
                     use_cookies=False
