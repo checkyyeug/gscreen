@@ -106,6 +106,8 @@ class SlideshowDisplay:
         self.font = None
         self.last_sync_time = None
         self.screen_asleep = False  # Track if screen is in sleep mode
+        self.error_message = None  # Current error message to display
+        self.error_message_time = None  # When error message was set
 
         # Current image info
         self.current_image_path = None
@@ -1282,7 +1284,11 @@ class SlideshowDisplay:
             logger.warning("No media files found, attempting sync...")
             from gdrive_sync import GoogleDriveSync
             sync = GoogleDriveSync()
-            sync.sync()
+            try:
+                sync.sync()
+            except Exception as e:
+                logger.error(f"Sync failed: {e}", exc_info=True)
+                self._show_error_message(f"同步失败: {str(e)}")
             # Reload images after sync
             self.images = self.load_images(cache_dir)
 
@@ -1388,13 +1394,21 @@ class SlideshowDisplay:
                 sync_interval = self.settings['sync']['check_interval_minutes'] * 60
                 if current_time - last_sync >= sync_interval:
                     logger.info("Checking for new images...")
-                    sync.sync()
+                    try:
+                        sync.sync()
+                    except Exception as e:
+                        logger.error(f"Sync failed: {e}", exc_info=True)
+                        self._show_error_message(f"同步失败: {str(e)}")
                     self.images = self.load_images(cache_dir)
                     self.last_sync_time = datetime.datetime.now()
                     # Reset index if out of bounds
                     if self.current_image_index >= len(self.images):
                         self.current_image_index = 0
                     last_sync = current_time
+
+                # Display error message if any
+                if self.error_message and time.time() - self.error_message_time < 30:
+                    self._show_error_message(self.error_message)
 
                 # Small sleep to prevent high CPU usage
                 time.sleep(0.05)
@@ -1456,7 +1470,11 @@ class SlideshowDisplay:
                         elif event.key == pg.K_r:
                             # Manual sync trigger
                             logger.info("Manual sync triggered (R key)")
-                            sync.sync()
+                            try:
+                                sync.sync()
+                            except Exception as e:
+                                logger.error(f"Sync failed: {e}", exc_info=True)
+                                self._show_error_message(f"同步失败: {str(e)}")
                             # Check for new files
                             self.images = self.load_images(self.cache_dir)
                             if self.images:
@@ -1490,7 +1508,11 @@ class SlideshowDisplay:
                 current_time = time.time()
                 if current_time - last_sync >= sync_interval:
                     logger.info("Periodic sync check...")
-                    sync.sync()
+                    try:
+                        sync.sync()
+                    except Exception as e:
+                        logger.error(f"Sync failed: {e}", exc_info=True)
+                        self._show_error_message(f"同步失败: {str(e)}")
                     last_sync = current_time
                     # Check for new files
                     self.images = self.load_images(self.cache_dir)
@@ -1609,6 +1631,43 @@ class SlideshowDisplay:
             except Exception as e:
                 logger.error(f"Error in countdown mode: {e}", exc_info=True)
                 time.sleep(0.1)
+
+    def _show_error_message(self, message: str):
+        """Display error message in red on screen"""
+        pg = get_pygame()
+
+        # Store error message to display periodically
+        self.error_message = message
+        self.error_message_time = time.time()
+
+        # Create fonts for error display
+        try:
+            error_font = pg.font.SysFont('DejaVuSans', 32, bold=True)
+        except:
+            error_font = pg.font.Font(None, 40)
+
+        # Screen dimensions
+        screen_width = self.virt_width
+        screen_height = self.virt_height
+
+        # Draw error message in red
+        text_surface = error_font.render(message, True, (255, 50, 50))
+        text_x = (screen_width - text_surface.get_width()) // 2
+        text_y = screen_height - 100
+
+        if self.virtual_screen:
+            self.virtual_screen.blit(text_surface, (text_x, text_y))
+        else:
+            self.screen.blit(text_surface, (text_x, text_y))
+
+        # Update display
+        if self.virtual_screen and self.physical_screen:
+            pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.physical_screen)
+        pg.display.flip()
+
+    def _clear_error_message(self):
+        """Clear stored error message"""
+        self.error_message = None
 
 
 def main():
