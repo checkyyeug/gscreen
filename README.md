@@ -15,6 +15,8 @@ A lightweight photo and video slideshow application that displays media from Goo
 - Smart sync: Compares file sizes before downloading to save bandwidth
 - **No-media waiting mode**: Displays message when no files are available, auto-starts when files arrive
 - **Schedule countdown**: Shows 60-second countdown when starting outside scheduled hours
+- **UTF-8 support**: Handles Chinese and other non-ASCII filenames correctly
+- **System time sync**: Automatically syncs system time via NTP during sync operations
 - Supports images: JPG, PNG, GIF, BMP, WebP, TIFF, and more
 - Supports videos: MP4, AVI, MOV, MKV, WebM
 - Optional audio playback for videos (via ffmpeg)
@@ -329,6 +331,8 @@ sudo apt install ffmpeg
 | `check_interval_minutes` | integer | `1` | Minutes between sync checks |
 | `local_cache_dir` | string | `"./media"` | Directory to store downloaded media |
 | `download_on_start` | boolean | `false` | Download all media on startup |
+| `timezone_offset` | integer | `8` | Timezone offset from UTC (-12 to +14) |
+| `sync_system_time` | boolean | `true` | Enable automatic system time sync via NTP |
 
 **Sync Behavior:**
 - The app uses incremental sync to save bandwidth
@@ -336,6 +340,26 @@ sudo apt install ffmpeg
 - Compares file sizes before downloading
 - Skips files that already exist locally with the same size
 - If no media files are found, displays a waiting message and checks periodically for new files
+- Supports Chinese and UTF-8 filenames
+
+**Timezone Settings:**
+The `timezone_offset` sets your local timezone offset from UTC. Common values:
+- `8` - Beijing, Shanghai, Singapore (UTC+8)
+- `9` - Tokyo, Seoul (UTC+9)
+- `0` - London, Dublin (UTC+0)
+- `-5` - New York, Eastern Time (UTC-5)
+- `-8` - Los Angeles, Pacific Time (UTC-8)
+
+**System Time Sync:**
+When `sync_system_time` is enabled, the app will automatically sync the system time during each sync operation. This requires sudo permissions. To enable passwordless time sync for the systemd service:
+
+```bash
+sudo visudo
+# Add the following line:
+rpi4 ALL=(ALL) NOPASSWD: /usr/bin/timedatectl, /usr/bin/date
+```
+
+Replace `rpi4` with your actual username. This allows the service to set the time without requiring a password prompt.
 
 #### Supported Formats
 
@@ -501,6 +525,22 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 - The app auto-detects X11 or framebuffer
 - If detection fails, try: `export DISPLAY=:0 && ./run.sh`
 - Check what's available: `ls /tmp/.X11-unix/` `ls /dev/fb*`
+
+### System time sync not working
+- Time sync requires sudo permissions to modify system time
+- If running as a service, add passwordless sudo entry (see Sync Options above)
+- Check logs for `[TimeSync]` messages to see what's happening
+- If you see "Authentication required", configure sudoers as shown above
+- Available time sync methods (tried in order):
+  1. `timedatectl` - Systemd time service (preferred)
+  2. `ntpdate` - Traditional NTP client
+  3. Python `ntplib` - Pure Python NTP (fallback)
+
+### Chinese filenames not displaying correctly
+- The app uses UTF-8 encoding for all operations
+- Ensure your terminal locale supports UTF-8: `locale charmap`
+- If needed, set locale: `sudo raspi-config` → Internationalisation Options → Locale
+- Select `en_US.UTF-8` or `zh_CN.UTF-8`
 
 ## Keyboard Controls (when keyboard connected)
 
