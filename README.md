@@ -11,7 +11,10 @@ A lightweight photo and video slideshow application that displays media from Goo
 - Images scaled to fit/fill screen with aspect ratio preservation
 - Fullscreen borderless display
 - Configurable slideshow interval (default: 5 seconds)
-- Auto-sync with Google Drive (configurable interval)
+- **Incremental sync**: Only downloads new/changed files from Google Drive
+- Smart sync: Compares file sizes before downloading to save bandwidth
+- **No-media waiting mode**: Displays message when no files are available, auto-starts when files arrive
+- **Schedule countdown**: Shows 60-second countdown when starting outside scheduled hours
 - Supports images: JPG, PNG, GIF, BMP, WebP, TIFF, and more
 - Supports videos: MP4, AVI, MOV, MKV, WebM
 - Optional audio playback for videos (via ffmpeg)
@@ -273,6 +276,7 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 - During active time: Normal slideshow operation
 - Outside active time: Screen goes black (sleep mode), playback stops
 - When schedule ends during active playback: Screen sleeps, resumes at same position when schedule starts again
+- **Startup outside schedule**: Shows 60-second countdown before entering sleep mode, displays "不在 Schedule 内" message
 
 **Schedule Examples:**
 ```json
@@ -325,6 +329,13 @@ sudo apt install ffmpeg
 | `check_interval_minutes` | integer | `1` | Minutes between sync checks |
 | `local_cache_dir` | string | `"./media"` | Directory to store downloaded media |
 | `download_on_start` | boolean | `false` | Download all media on startup |
+
+**Sync Behavior:**
+- The app uses incremental sync to save bandwidth
+- Only downloads new or changed files from Google Drive
+- Compares file sizes before downloading
+- Skips files that already exist locally with the same size
+- If no media files are found, displays a waiting message and checks periodically for new files
 
 #### Supported Formats
 
@@ -471,7 +482,9 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 | Method | Modification Time Check | Incremental Download | Setup |
 |--------|------------------------|---------------------|-------|
 | rclone (recommended) | Yes | Yes | Requires config |
-| gdown (fallback) | No | No | Works immediately |
+| gdown (fallback) | Yes | Yes | Works immediately |
+
+**Note:** Both methods now support incremental sync - only downloading new or changed files.
 
 ### Images not scaling correctly
 - Change `scale_mode` in settings.json:
