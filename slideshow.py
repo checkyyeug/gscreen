@@ -958,8 +958,9 @@ class SlideshowDisplay:
 
         self._init_font()
 
-        screen_width = self.screen_width
-        screen_height = self.screen_height
+        # Use virtual screen dimensions for software rotation mode
+        screen_width = self.virt_width
+        screen_height = self.virt_height
 
         # Determine orientation and get corresponding layout (same as images)
         is_portrait = self.rotation in [90, 270]
@@ -1115,10 +1116,6 @@ class SlideshowDisplay:
             target.blit(clear_surface, (0, y))
             # Then blit the semi-transparent status bar
             target.blit(surface, (0, y))
-
-        # Apply software rotation if needed
-        if self.rotation_mode == 'software':
-            self._apply_rotation_to_screen()
 
 
     def _signal_handler(self, signum, frame):
