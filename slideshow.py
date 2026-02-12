@@ -134,6 +134,7 @@ class SlideshowDisplay:
         # Set up framebuffer environment
         os.environ['SDL_VIDEODRIVER'] = 'fbcon'
         os.environ['SDL_FBDEV'] = fb_device
+        # Disable mouse cursor
         os.environ['SDL_NOMOUSE'] = '1'
 
         logger.info("Trying framebuffer (fbcon) driver...")
@@ -162,6 +163,9 @@ class SlideshowDisplay:
 
         os.environ['SDL_VIDEODRIVER'] = 'x11'
         os.environ['DISPLAY'] = f':{display_num}'
+        # Disable mouse cursor in X11
+        os.environ['SDL_NOMOUSE'] = '1'
+        os.environ['SDL_VIDEO_X11_DGAMOUSE'] = '0'
 
         logger.info(f"Trying X11 driver on DISPLAY=:{display_num}...")
         return True
@@ -421,6 +425,9 @@ class SlideshowDisplay:
 
         while self.running:
             try:
+                # Ensure mouse cursor is hidden (especially for X11)
+                pygame.mouse.set_visible(False)
+
                 # Handle events
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
