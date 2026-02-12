@@ -462,9 +462,16 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 
 ### Google Drive sync not working
 - Verify folder is public (Anyone with link can view)
-- Try using `gdown` manually: `gdown --folder <url> -O media`
-- Consider installing `rclone` for better reliability
+- **Recommended**: Install `rclone` for efficient sync with modification time checking
+  - `sudo apt install rclone && rclone config` (follow prompts to set up Google Drive)
+- Alternatively, try `gdown` manually: `gdown --folder <url> -O media`
 - Check internet connection
+
+**Sync methods comparison:**
+| Method | Modification Time Check | Incremental Download | Setup |
+|--------|------------------------|---------------------|-------|
+| rclone (recommended) | Yes | Yes | Requires config |
+| gdown (fallback) | No | No | Works immediately |
 
 ### Images not scaling correctly
 - Change `scale_mode` in settings.json:

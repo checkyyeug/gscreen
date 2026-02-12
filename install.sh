@@ -102,13 +102,15 @@ else
     echo "User $USER is already in video group"
 fi
 
-# Optional: Install rclone for better Google Drive sync
+# Install rclone for improved Google Drive sync (recommended)
 echo ""
-read -p "Install rclone for improved Google Drive sync? (y/N) " -n 1 -r
+read -p "Install rclone for improved sync? Recommended for best performance (Y/n) " -n 1 -r
 echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     sudo apt install -y rclone
     echo "rclone installed. Configure with: rclone config"
+else
+    echo "rclone not installed. Sync will use gdown (slower, no modification time checking)."
 fi
 
 # Make Python scripts executable
