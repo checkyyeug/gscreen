@@ -1407,7 +1407,7 @@ def main():
             settings = json.load(f)
         cache_dir = settings['sync']['local_cache_dir']
     except:
-        cache_dir = "./photos"
+        cache_dir = "./media"
 
     slideshow = SlideshowDisplay()
     slideshow.run(cache_dir)

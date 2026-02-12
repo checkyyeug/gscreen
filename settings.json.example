@@ -40,7 +40,7 @@
     },
     "sync": {
         "check_interval_minutes": 1,
-        "local_cache_dir": "./photos",
+        "local_cache_dir": "./media",
         "download_on_start": false
     },
     "supported_formats": [

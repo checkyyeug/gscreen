@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-gScreen - Google Drive Photo Slideshow for Raspberry Pi
-Displays photos from Google Drive on HDMI output
+gScreen - Google Drive Media Slideshow for Raspberry Pi
+Displays media from Google Drive on HDMI output
 
 Usage:
     python main.py [--sync-only] [--display-only]
@@ -94,7 +94,7 @@ def create_default_settings(path: str):
         },
         "sync": {
             "check_interval_minutes": 1,
-            "local_cache_dir": "./photos",
+            "local_cache_dir": "./media",
             "download_on_start": True
         },
         "supported_formats": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]

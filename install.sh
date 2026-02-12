@@ -117,8 +117,8 @@ chmod +x slideshow.py
 chmod +x gdrive_sync.py
 chmod +x download.py
 
-# Create photos directory
-mkdir -p photos
+# Create media directory
+mkdir -p media
 
 echo ""
 echo "========================================="

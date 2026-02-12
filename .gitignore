@@ -8,8 +8,8 @@ venv/
 env/
 ENV/
 
-# Photos - don't commit user images
-photos/
+# Media - don't commit user images
+media/
 
 # Settings - may contain sensitive info
 settings.json

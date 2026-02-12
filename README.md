@@ -6,7 +6,7 @@ A lightweight photo and video slideshow application that displays media from Goo
 
 ## Features
 
-- Displays photos and videos from Google Drive on HDMI output
+- Displays media from Google Drive on HDMI output
 - **Auto-detects display mode**: X11 (with desktop) or framebuffer (headless)
 - Images scaled to fit/fill screen with aspect ratio preservation
 - Fullscreen borderless display
@@ -184,7 +184,7 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
     },
     "sync": {
         "check_interval_minutes": 1,
-        "local_cache_dir": "./photos",
+        "local_cache_dir": "./media",
         "download_on_start": false
     },
     "supported_formats": [
@@ -323,7 +323,7 @@ sudo apt install ffmpeg
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `check_interval_minutes` | integer | `1` | Minutes between sync checks |
-| `local_cache_dir` | string | `"./photos"` | Directory to store downloaded media |
+| `local_cache_dir` | string | `"./media"` | Directory to store downloaded media |
 | `download_on_start` | boolean | `false` | Download all media on startup |
 
 #### Supported Formats
@@ -462,7 +462,7 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 
 ### Google Drive sync not working
 - Verify folder is public (Anyone with link can view)
-- Try using `gdown` manually: `gdown --folder <url> -O photos`
+- Try using `gdown` manually: `gdown --folder <url> -O media`
 - Consider installing `rclone` for better reliability
 - Check internet connection
 

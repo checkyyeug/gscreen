@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Google Drive Sync Module
-Downloads and keeps photos in sync with a Google Drive folder
+Downloads and keeps media in sync with a Google Drive folder
 """
 
 import os

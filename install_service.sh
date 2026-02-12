@@ -58,7 +58,7 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=$INSTALL_DIR/photos $INSTALL_DIR/venv
+ReadWritePaths=$INSTALL_DIR/media $INSTALL_DIR/venv
 
 [Install]
 WantedBy=multi-user.target
