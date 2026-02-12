@@ -1,0 +1,59 @@
+{
+    "google_drive_url": "https://drive.google.com/drive/folders/YOUR_FOLDER_ID",
+    "display": {
+        "hdmi_port": 1,
+        "fullscreen": true,
+        "borderless": true,
+        "background_color": [0, 0, 0],
+        "hide_mouse": true,
+        "show_statusbar": true,
+        "rotation": 0,
+        "rotation_mode": "hardware",
+        "statusbar_layout": {
+            "opacity": 0.3,
+            "landscape": {
+                "file_info_position": "top",
+                "system_info_position": "bottom",
+                "progress_position": "bottom"
+            },
+            "portrait": {
+                "file_info_position": "bottom",
+                "system_info_position": "top",
+                "progress_position": "top"
+            }
+        }
+    },
+    "slideshow": {
+        "interval_seconds": 5,
+        "scale_mode": "fit"
+    },
+    "sync": {
+        "check_interval_minutes": 1,
+        "local_cache_dir": "./photos",
+        "download_on_start": false
+    },
+    "supported_formats": [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".tiff",
+        ".tif",
+        ".tga",
+        ".pbm",
+        ".pgm",
+        ".ppm",
+        ".pnm",
+        ".ico",
+        ".pcx",
+        ".dib",
+        ".xbm",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".webm"
+    ]
+}

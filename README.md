@@ -1,18 +1,19 @@
 # gScreen - Google Drive Photo Slideshow for Raspberry Pi
 
-A lightweight photo slideshow application that displays images from Google Drive on HDMI output.
+A lightweight photo and video slideshow application that displays media from Google Drive on HDMI output.
 
 **Auto-detects display mode** - Works on Raspberry Pi OS with or without desktop.
 
 ## Features
 
-- Displays photos from Google Drive on HDMI output
+- Displays photos and videos from Google Drive on HDMI output
 - **Auto-detects display mode**: X11 (with desktop) or framebuffer (headless)
 - Images scaled to fit/fill screen with aspect ratio preservation
 - Fullscreen borderless display
 - Configurable slideshow interval (default: 5 seconds)
 - Auto-sync with Google Drive (configurable interval)
-- Supports: JPG, PNG, GIF, BMP, WebP
+- Supports images: JPG, PNG, GIF, BMP, WebP, TIFF, and more
+- Supports videos: MP4, AVI, MOV, MKV, WebM
 - Auto-start on boot via systemd service
 - Low CPU usage, suitable for 24/7 operation
 
@@ -143,11 +144,15 @@ sudo journalctl -u gscreen -f
 | `display.statusbar_position` | Status bar position: "top" or "bottom" | "bottom" |
 | `display.rotation` | Display rotation: 0, 90, 180, or 270 | 0 |
 | `display.rotation_mode` | Rotation method: "hardware" or "software" | "hardware" |
-| `slideshow.interval_seconds` | Time between images | 5 |
+| `slideshow.interval_seconds` | Time between images/videos | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
 | `sync.check_interval_minutes` | Sync check interval | 1 |
-| `sync.local_cache_dir` | Local photo cache directory | ./photos |
-| `supported_formats` | Image file extensions | jpg,jpeg,png,gif,bmp,webp |
+| `sync.local_cache_dir` | Local media cache directory | ./photos |
+| `supported_formats` | File extensions to display | jpg,jpeg,png,gif,bmp,webp,tiff,mp4,avi,mov,mkv,webm |
+
+**Supported formats:**
+- Images: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, TGA, PBM, PGM, PPM, PNM, ICO, PCX, DIB, XBM
+- Videos: MP4, AVI, MOV, MKV, WebM (via OpenCV)
 
 ### Status Bar Information
 
