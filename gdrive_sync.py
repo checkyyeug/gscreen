@@ -150,8 +150,11 @@ class GoogleDriveSync:
         logger.info("Starting sync...")
 
         # Sync system time if enabled
+        time_sync_ok = True
         if self.sync_system_time:
-            self._sync_system_time()
+            time_sync_ok = self._sync_system_time()
+            if not time_sync_ok:
+                logger.warning("System time sync failed, but continuing with file sync...")
 
         # Try rclone first for efficient sync (can list files with mod time without downloading)
         rclone_result = self._sync_with_rclone_check_only()
@@ -163,7 +166,7 @@ class GoogleDriveSync:
         return self._sync_with_gdown()
 
     def _sync_system_time(self):
-        """Sync system time using NTP"""
+        """Sync system time using NTP. Returns True if successful, False otherwise."""
         import subprocess
         import sys
         logger.info(f"[TimeSync] Starting time sync (UTC+{self.timezone_offset})...")
@@ -177,7 +180,7 @@ class GoogleDriveSync:
                 logger.warning("[TimeSync] Not running as root and no TTY available, skipping system time sync")
                 logger.info("[TimeSync] To enable time sync, add this to /etc/sudoers:")
                 logger.info("[TimeSync]   rpi4 ALL=(ALL) NOPASSWD: /usr/bin/timedatectl, /usr/bin/date")
-                return
+                return False
             logger.info("[TimeSync] Not running as root, will try with sudo...")
 
         try:
@@ -194,9 +197,10 @@ class GoogleDriveSync:
                 logger.warning("[TimeSync] Authentication required for time sync")
                 logger.info("[TimeSync] To enable auto time sync, add this to /etc/sudoers:")
                 logger.info("[TimeSync]   rpi4 ALL=(ALL) NOPASSWD: /usr/bin/timedatectl, /usr/bin/date")
-                return
+                return False
             else:
                 logger.warning(f"[TimeSync] timedatectl set-ntp failed: {result.stderr}")
+                return False
 
             # Set timezone if needed
             tz_map = {
@@ -237,8 +241,10 @@ class GoogleDriveSync:
                 # Show current time after sync
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 logger.info(f"[TimeSync] Current system time: {current_time}")
+                return True
             else:
                 logger.warning(f"[TimeSync] Failed to set timezone: {result.stderr}")
+                return False
 
         except FileNotFoundError:
             # timedatectl not available, try using ntpdate
@@ -251,19 +257,22 @@ class GoogleDriveSync:
                 result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
                 if result.returncode == 0:
                     logger.info(f"[TimeSync] ntpdate sync successful: {result.stdout.strip()}")
+                    return True
                 else:
                     logger.warning(f"[TimeSync] ntpdate failed: {result.stderr}")
+                    return False
             except FileNotFoundError:
                 logger.warning("[TimeSync] ntpdate not found, trying Python NTP...")
-                self._sync_time_via_ntp(is_root, has_tty)
+                return self._sync_time_via_ntp(is_root, has_tty)
             except subprocess.TimeoutExpired:
                 logger.warning("[TimeSync] ntpdate timed out, trying Python NTP...")
-                self._sync_time_via_ntp(is_root, has_tty)
+                return self._sync_time_via_ntp(is_root, has_tty)
         except subprocess.CalledProcessError as e:
             logger.warning(f"[TimeSync] timedatectl command failed: {e}")
-            self._sync_time_via_ntp(is_root, has_tty)
+            return self._sync_time_via_ntp(is_root, has_tty)
         except Exception as e:
             logger.warning(f"[TimeSync] Failed to sync system time: {e}")
+            return False
 
     def _sync_time_via_ntp(self, is_root=False, has_tty=False):
         """Sync system time using Python NTP client"""
@@ -300,13 +309,17 @@ class GoogleDriveSync:
                 logger.info(f"[TimeSync] System time synced via NTP: {time_str}")
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 logger.info(f"[TimeSync] Current system time: {current_time}")
+                return True
             else:
                 logger.warning(f"[TimeSync] Failed to set time: {result.stderr}")
+                return False
         except ImportError:
             logger.warning("[TimeSync] ntplib not available, install with: pip install ntplib")
             logger.info("[TimeSync] Skipping time sync (ntplib required)")
+            return False
         except Exception as e:
             logger.warning(f"[TimeSync] Failed to sync time via NTP: {type(e).__name__}: {e}")
+            return False
 
     def _sync_with_rclone_check_only(self) -> bool:
         """
