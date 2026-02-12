@@ -279,11 +279,15 @@ class GoogleDriveSync:
 
     def _sync_with_gdown(self) -> bool:
         """
-        Fallback method using gdown.
-        Downloads all files and compares afterwards.
+        Download using gdown Python module.
+        Downloads to temp directory first, then moves to media directory.
         """
-        import subprocess
         import shutil
+        try:
+            from gdown import download_folder
+        except ImportError:
+            logger.error("gdown module not available. Install with: pip install gdown")
+            return False
 
         try:
             # Create a temp directory for downloads
@@ -294,18 +298,17 @@ class GoogleDriveSync:
                 shutil.rmtree(temp_dir)
             temp_dir.mkdir(exist_ok=True)
 
-            # Download to temp directory using gdown
-            cmd = [
-                'gdown',
-                f'https://drive.google.com/drive/folders/{self._drive_id}',
-                '--folder',
-                '-O', str(temp_dir)
-            ]
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-            if result.returncode != 0:
-                logger.warning(f"gdown returned: {result.stderr}")
+            # Use gdown Python module to download
+            try:
+                logger.info(f"Downloading from Google Drive to {temp_dir}...")
+                download_folder(
+                    f'https://drive.google.com/drive/folders/{self._drive_id}',
+                    output=str(temp_dir),
+                    quiet=False,
+                    use_cookies=False
+                )
+            except Exception as e:
+                logger.warning(f"gdown download error: {e}")
                 return False
 
             # Get list of files before sync (from media directory)
@@ -316,7 +319,6 @@ class GoogleDriveSync:
 
             # Get list of files downloaded (from temp directory)
             drive_files = set()
-            # gdown creates subdirectories, so we need to traverse
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     file_path = Path(root) / file
@@ -391,12 +393,6 @@ class GoogleDriveSync:
 
             return True
 
-        except FileNotFoundError:
-            logger.error("gdown not found. Install with: pip install gdown")
-            return False
-        except subprocess.TimeoutExpired:
-            logger.error("Download timed out")
-            return False
         except Exception as e:
             logger.error(f"Sync error: {e}")
             # Clean up temp directory on error
