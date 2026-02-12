@@ -129,65 +129,168 @@ class GoogleDriveSync:
 
     def sync(self) -> bool:
         """
-        Perform sync operation.
+        Perform sync operation with Google Drive.
+        - Downloads new/modified files
+        - Deletes local files that no longer exist on Drive
         Returns True if any changes were made.
         """
         logger.info("Starting sync...")
 
-        # Use rclone or gdown for actual syncing
-        # This is a more practical approach for Raspberry Pi
-
         import subprocess
+        import shutil
 
-        # First, try using gdown to download the folder
         try:
             # Create a temp directory for downloads
             temp_dir = self.cache_dir / '.temp'
+
+            # Remove old temp directory if it exists
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
             temp_dir.mkdir(exist_ok=True)
 
-            # Download folder using gdown
+            # Download to temp directory using gdown
             cmd = [
                 'gdown',
                 f'https://drive.google.com/drive/folders/{self._drive_id}',
                 '--folder',
-                '-O', str(self.cache_dir)
+                '-O', str(temp_dir)
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
-            if result.returncode == 0:
-                logger.info("Download completed successfully")
-                return True
-            else:
+            if result.returncode != 0:
                 logger.warning(f"gdown returned: {result.stderr}")
+                # Try rclone as fallback
+                return self._sync_with_rclone()
+
+            # Get list of files before sync (from media directory)
+            local_files_before = set()
+            for file in self.cache_dir.iterdir():
+                if file.is_file() and self._is_supported_image(file.name):
+                    local_files_before.add(file.name)
+
+            # Get list of files downloaded (from temp directory)
+            drive_files = set()
+            # gdown creates subdirectories, so we need to traverse
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    file_path = Path(root) / file
+                    if file_path.is_file() and self._is_supported_image(file):
+                        drive_files.add(file)
+
+            # Remove old temp subdirectories created by gdown
+            for item in temp_dir.iterdir():
+                if item.is_dir():
+                    # Move files from subdirectory to temp root
+                    for file in item.iterdir():
+                        if file.is_file():
+                            shutil.move(str(file), str(temp_dir / file.name))
+                    # Remove the subdirectory
+                    shutil.rmtree(item)
+
+            # Now drive_files should be in the root of temp_dir
+            # Get the actual list
+            drive_files = set()
+            for file in temp_dir.iterdir():
+                if file.is_file() and self._is_supported_image(file.name):
+                    drive_files.add(file.name)
+
+            # Find files to delete (in local but not on Drive)
+            files_to_delete = local_files_before - drive_files
+
+            # Delete local files that no longer exist on Drive
+            deleted_count = 0
+            for filename in files_to_delete:
+                try:
+                    file_path = self.cache_dir / filename
+                    if file_path.exists():
+                        file_path.unlink()
+                        logger.info(f"Deleted: {filename} (removed from Drive)")
+                        deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to delete {filename}: {e}")
+
+            # Move new/updated files from temp to media directory
+            added_count = 0
+            updated_count = 0
+            for filename in drive_files:
+                temp_file = temp_dir / filename
+                local_file = self.cache_dir / filename
+
+                if not local_file.exists():
+                    # New file
+                    shutil.move(str(temp_file), str(local_file))
+                    added_count += 1
+                    logger.info(f"Added: {filename}")
+                else:
+                    # File exists, check if it's different (by size and modification time)
+                    temp_size = temp_file.stat().st_size
+                    local_size = local_file.stat().st_size
+
+                    if temp_size != local_size:
+                        shutil.move(str(temp_file), str(local_file))
+                        updated_count += 1
+                        logger.info(f"Updated: {filename}")
+                    else:
+                        # Same file, remove temp copy
+                        temp_file.unlink()
+
+            # Clean up temp directory
+            shutil.rmtree(temp_dir)
+
+            total_changes = added_count + updated_count + deleted_count
+            if total_changes > 0:
+                logger.info(f"Sync completed: +{added_count} added, ~{updated_count} updated, -{deleted_count} deleted")
+            else:
+                logger.info("Sync completed: No changes")
+
+            return True
 
         except FileNotFoundError:
             logger.error("gdown not found. Install with: pip install gdown")
+            return False
         except subprocess.TimeoutExpired:
             logger.error("Download timed out")
+            return False
         except Exception as e:
             logger.error(f"Sync error: {e}")
-
-        return False
+            # Clean up temp directory on error
+            try:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+            return False
 
     def sync_with_rclone(self) -> bool:
         """
-        Alternative sync using rclone (more reliable for large folders)
+        Alternative sync using rclone with bidirectional sync.
         Requires: rclone configured with Google Drive
+        Deletes local files that no longer exist on Drive.
         """
         import subprocess
 
         try:
+            # Use rclone sync to bidirectionally sync
+            # --delete-excluded deletes local files that don't exist on remote
             cmd = [
                 'rclone',
-                'copy',
+                'sync',
                 f'remote:{self._drive_id}',
                 str(self.cache_dir),
                 '--progress',
-                '--exclude', '*.tmp'
+                '--exclude', '*.tmp',
+                '--delete-excluded',  # Delete local files not on remote
+                '-v'  # Verbose to see what's being synced
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+            if result.returncode == 0:
+                logger.info("rclone sync completed successfully")
+            else:
+                logger.warning(f"rclone sync error: {result.stderr}")
+
             return result.returncode == 0
 
         except FileNotFoundError:
