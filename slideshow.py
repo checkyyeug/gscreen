@@ -107,6 +107,7 @@ class SlideshowDisplay:
         self.last_sync_time = None
         self.screen_asleep = False  # Track if screen is in sleep mode
         self.error_message = None  # Current error message to display
+        self.was_active_time = True  # Track previous schedule state for countdown
         self.error_message_time = None  # When error message was set
 
         # Current image info
@@ -1352,14 +1353,21 @@ class SlideshowDisplay:
 
                 current_time = time.time()
 
-                # Check schedule - sleep if outside active time
+                # Check schedule - show countdown then sleep if outside active time
                 is_active = self._is_active_time()
                 if not is_active:
+                    # Just became inactive - show countdown first
+                    if self.was_active_time:
+                        self._show_sleep_countdown()
+                        self.was_active_time = False
+                    # After countdown, go to sleep
                     if not self.screen_asleep:
                         self._set_screen_power(False)
                     time.sleep(5)  # Sleep longer when inactive
                     continue
                 else:
+                    if not self.was_active_time:
+                        self.was_active_time = True
                     if self.screen_asleep:
                         self._set_screen_power(True)
                         # Force display first image when waking up
