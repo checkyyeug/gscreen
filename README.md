@@ -168,8 +168,6 @@ Status bar at **top**:
 Status bar at **bottom**:
 - Right side: Date, time, file name, format, dimensions, progress
 
-**During video playback (portrait mode only):**
-- Progress bar with percentage
 ### Display Rotation
 
 For portrait or upside-down displays, you can rotate the output:
