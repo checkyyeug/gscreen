@@ -137,111 +137,211 @@ sudo journalctl -u gscreen -f
 
 ## Configuration (settings.json)
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `google_drive_url` | Google Drive folder URL (public link) | Required |
-| `display.hdmi_port` | HDMI port preference (0 or 1) | 1 |
-| `display.background_color` | Background color [R,G,B] | [0,0,0] |
-| `display.hide_mouse` | Hide mouse cursor on display | true |
-| `display.show_statusbar` | Show status bar | true |
-| `display.statusbar_position` | Status bar position: "top" or "bottom" | "bottom" |
-| `display.rotation` | Display rotation: 0, 90, 180, or 270 | 0 |
-| `display.rotation_mode` | Rotation method: "hardware" or "software" | "hardware" |
-| `slideshow.interval_seconds` | Time between images/videos | 5 |
-| `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
-| `schedule.enabled` | Enable scheduled on/off times | false |
-| `schedule.days` | Days of week to run: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] | All days |
-| `schedule.start` | Start time (HH:MM format) | "07:00" |
-| `schedule.stop` | Stop time (HH:MM format) | "23:00" |
-| `audio.enabled` | Enable audio playback for videos | false |
-| `audio.device` | Audio output: "hdmi" or "local" | "hdmi" |
-| `audio.volume` | Audio volume (0-100) | 50 |
-| `sync.check_interval_minutes` | Sync check interval | 1 |
-| `sync.local_cache_dir` | Local media cache directory | ./photos |
-| `supported_formats` | File extensions to display | jpg,jpeg,png,gif,bmp,webp,tiff,mp4,avi,mov,mkv,webm |
+The `settings.json` file controls all aspects of gScreen. Below is a complete reference of all available options.
 
-**Supported formats:**
-- Images: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, TGA, PBM, PGM, PPM, PNM, ICO, PCX, DIB, XBM
-- Videos: MP4, AVI, MOV, MKV, WebM (via OpenCV, audio via ffplay when enabled)
-
-### Audio Configuration
-
-Audio support is included in the installation script (via ffmpeg). To enable audio for video playback, configure in settings.json:
+### Complete Example
 
 ```json
-"audio": {
-    "enabled": true,
-    "device": "hdmi",
-    "volume": 50
+{
+    "google_drive_url": "https://drive.google.com/drive/folders/YOUR_FOLDER_ID",
+    "display": {
+        "hdmi_port": 1,
+        "fullscreen": true,
+        "borderless": true,
+        "background_color": [0, 0, 0],
+        "hide_mouse": true,
+        "show_statusbar": true,
+        "rotation": 0,
+        "rotation_mode": "hardware",
+        "statusbar_layout": {
+            "opacity": 0.3,
+            "landscape": {
+                "file_info_position": "top",
+                "system_info_position": "bottom",
+                "progress_position": "bottom"
+            },
+            "portrait": {
+                "file_info_position": "bottom",
+                "system_info_position": "top",
+                "progress_position": "top"
+            }
+        }
+    },
+    "slideshow": {
+        "interval_seconds": 5,
+        "scale_mode": "fit"
+    },
+    "schedule": {
+        "enabled": false,
+        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "start": "07:00",
+        "stop": "23:00"
+    },
+    "audio": {
+        "enabled": false,
+        "device": "hdmi",
+        "volume": 50
+    },
+    "sync": {
+        "check_interval_minutes": 1,
+        "local_cache_dir": "./photos",
+        "download_on_start": false
+    },
+    "supported_formats": [
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+        ".mp4", ".avi", ".mov", ".mkv", ".webm"
+    ]
 }
 ```
 
-**Audio devices:**
-- `hdmi` - Output audio through HDMI (default)
-- `local` - Output audio through 3.5mm jack
+### Option Reference
 
-**Note:** If you ran install.sh before audio support was added, install ffmpeg manually:
+#### Root Level Options
+
+| Option | Type | Required | Default | Description |
+|--------|------|----------|---------|-------------|
+| `google_drive_url` | string | Yes | - | Public Google Drive folder URL |
+| `supported_formats` | array | No | see below | File extensions to display |
+
+#### Display Options (`display`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `hdmi_port` | integer | `1` | HDMI port to use (0 or 1) |
+| `fullscreen` | boolean | `true` | Run in fullscreen mode |
+| `borderless` | boolean | `true` | Remove window borders |
+| `background_color` | array | `[0,0,0]` | Background color [R, G, B] (0-255 each) |
+| `hide_mouse` | boolean | `true` | Hide mouse cursor after inactivity |
+| `show_statusbar` | boolean | `true` | Show status bar overlay |
+| `rotation` | integer | `0` | Display rotation: 0, 90, 180, or 270 |
+| `rotation_mode` | string | `"hardware"` | Rotation method: `"hardware"` or `"software"` |
+| `statusbar_layout` | object | see below | Status bar configuration per orientation |
+
+**Rotation Options:**
+- `0` - No rotation (default)
+- `90` - Rotate 90° counter-clockwise (portrait)
+- `180` - Rotate 180° (upside-down)
+- `270` - Rotate 270° (90° clockwise, portrait)
+
+**Rotation Modes:**
+- `hardware` - Use system-level rotation (requires config file edit)
+- `software` - Use pygame for rotation (recommended, easier)
+
+#### Status Bar Layout (`display.statusbar_layout`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `opacity` | float | `0.3` | Status bar opacity (0.0-1.0) |
+| `landscape` | object | see below | Layout for 0°/180° rotation |
+| `portrait` | object | see below | Layout for 90°/270° rotation |
+
+**Orientation Layout Options** (apply to both `landscape` and `portrait`):
+
+| Option | Type | Values | Description |
+|--------|------|--------|-------------|
+| `file_info_position` | string | `"top"`, `"bottom"` | Where to show file info (left side) |
+| `system_info_position` | string | `"top"`, `"bottom"` | Where to show system info (right side) |
+| `progress_position` | string | `"top"`, `"bottom"` | Where to show progress (center) |
+
+**Status Bar Sections:**
+- **File Info** (left): File name, date, size, format, dimensions
+- **System Info** (right): Resolution, rotation, WiFi, time, total count
+- **Progress** (center): Current/total count and countdown
+
+#### Slideshow Options (`slideshow`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `interval_seconds` | integer | `5` | Seconds between images |
+| `scale_mode` | string | `"fit"` | How to scale images: `"fit"`, `"fill"`, or `"stretch"` |
+
+**Scale Modes:**
+- `"fit"` - Letterbox/pillarbox (show full image with borders)
+- `"fill"` - Crop to fill screen (no borders, may crop edges)
+- `"stretch"` - Stretch to fill (may distort aspect ratio)
+
+#### Schedule Options (`schedule`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable scheduled on/off times |
+| `days` | array | All days | Days to run: `["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]` |
+| `start` | string | `"07:00"` | Start time (HH:MM format, 24-hour) |
+| `stop` | string | `"23:00"` | Stop time (HH:MM format, 24-hour) |
+
+**Schedule Behavior:**
+- During active time: Normal slideshow operation
+- Outside active time: Screen goes black (sleep mode), playback stops
+- When schedule ends during active playback: Screen sleeps, resumes at same position when schedule starts again
+
+**Schedule Examples:**
+```json
+// Business hours (weekdays 9am-6pm)
+"schedule": {
+    "enabled": true,
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+    "start": "09:00",
+    "stop": "18:00"
+}
+
+// All day, every day
+"schedule": {
+    "enabled": true,
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    "start": "00:00",
+    "stop": "23:59"
+}
+
+// Weekend only
+"schedule": {
+    "enabled": true,
+    "days": ["Sat", "Sun"],
+    "start": "08:00",
+    "stop": "22:00"
+}
+```
+
+#### Audio Options (`audio`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable audio for video playback |
+| `device` | string | `"hdmi"` | Audio output: `"hdmi"` or `"local"` |
+| `volume` | integer | `50` | Volume level (0-100) |
+
+**Audio Devices:**
+- `"hdmi"` - Output through HDMI (default)
+- `"local"` - Output through 3.5mm headphone jack
+
+**Note:** Audio requires ffmpeg to be installed (included in install.sh). If you ran install.sh before audio support was added:
 ```bash
 sudo apt install ffmpeg
 ```
 
-### Schedule Configuration
+#### Sync Options (`sync`)
 
-Configure automatic on/off times for the slideshow. Useful for digital signage or photo frames that should only run during certain hours.
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `check_interval_minutes` | integer | `1` | Minutes between sync checks |
+| `local_cache_dir` | string | `"./photos"` | Directory to store downloaded media |
+| `download_on_start` | boolean | `false` | Download all media on startup |
 
-```json
-"schedule": {
-    "enabled": true,
-    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-    "start": "07:00",
-    "stop": "23:00"
-}
-```
+#### Supported Formats
 
-**Settings:**
-- `enabled` - Enable/disable scheduling (default: false)
-- `days` - Days of week to run: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
-- `start` - Start time in HH:MM format (24-hour)
-- `stop` - Stop time in HH:MM format (24-hour)
+Default supported formats:
 
-**Behavior:**
-- During active time: Normal slideshow operation
-- Outside active time: Screen goes to sleep (black screen), playback stops
-- When waking up: Resumes from current position
+**Images:** `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.webp`, `.tiff`, `.tif`, `.tga`, `.pbm`, `.pgm`, `.ppm`, `.pnm`, `.ico`, `.pcx`, `.dib`, `.xbm`
 
-**Examples:**
-- Business hours (weekdays only): `"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "start": "09:00", "stop": "18:00"`
-- All day: `"days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "start": "00:00", "stop": "23:59"`
-- Weekend only: `"days": ["Sat", "Sun"], "start": "08:00", "stop": "22:00"`
+**Videos:** `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`
 
-### Status Bar Layout Configuration
+You can customize this list in `settings.json`. Images are displayed via pygame/Pillow, videos via OpenCV.
 
-The status bar layout can be customized for different orientations. Configure in settings.json:
+**Format Notes:**
+- MP4 with H.264 codec is recommended for best performance on Raspberry Pi
+- GIF animations are displayed as static images (first frame)
+- Large videos may have performance issues on older Raspberry Pi models
 
-```json
-"statusbar_layout": {
-    "opacity": 0.3,
-    "landscape": {
-        "file_info_position": "top",
-        "system_info_position": "bottom",
-        "progress_position": "bottom"
-    },
-    "portrait": {
-        "file_info_position": "bottom",
-        "system_info_position": "top",
-        "progress_position": "top"
-    }
-}
-```
-
-**Position options:** `top` or `bottom`
-
-**Content sections:**
-- `file_info` - File name, date, size, format, dimensions (displayed on left)
-- `system_info` - Resolution, rotation, WiFi, time, total count (displayed on right)
-- `progress` - Current/total count and countdown (displayed in center)
-
-### Status Bar Information
+### Display Rotation
 
 **Landscape mode (rotation 0° or 180°):**
 
