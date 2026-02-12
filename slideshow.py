@@ -333,6 +333,71 @@ class SlideshowDisplay:
         if self.virtual_screen is None:
             return
 
+        pg = get_pygame()
+        self._init_font()
+
+        screen_width = self.virt_width
+        screen_height = self.virt_height
+
+        # Determine orientation and get corresponding layout
+        is_portrait = self.rotation in [90, 270]
+        orientation = 'portrait' if is_portrait else 'landscape'
+        layout = self.statusbar_layout.get(orientation, {
+            'file_info_position': 'top' if not is_portrait else 'bottom',
+            'system_info_position': 'top' if not is_portrait else 'bottom',
+            'progress_position': 'bottom' if not is_portrait else 'top'
+        })
+
+        file_info_pos = layout.get('file_info_position', 'top' if not is_portrait else 'bottom')
+        system_info_pos = layout.get('system_info_position', 'top' if not is_portrait else 'bottom')
+        progress_pos = layout.get('progress_position', 'bottom' if not is_portrait else 'top')
+
+        if self.rotation in [90, 270]:
+            physical_res = f"{self.screen_height}x{self.screen_width}"
+        else:
+            physical_res = f"{self.screen_width}x{self.screen_height}"
+
+        # Prepare file info texts
+        file_texts = []
+        if self.current_image_info:
+            name = self.current_image_info.get('name', '')
+            if len(name) > 25:
+                name = name[:22] + '...'
+            file_texts = [
+                f"{name}",
+                f"{self.current_image_info.get('modified', '')}",
+            ]
+            dims = self.current_image_info.get('dimensions', '')
+            if dims:
+                file_texts.append(f"{dims}")
+            fmt = self.current_image_info.get('format', '')
+            if fmt:
+                file_texts.append(f"{fmt}")
+
+        # Prepare system info texts
+        sys_texts = [
+            f"{physical_res}",
+            f"R:{self.rotation}°",
+            f"{datetime.datetime.now().strftime('%H:%M:%S')}",
+            f"WiFi:{self._get_wifi_signal()}",
+        ]
+        if self.last_sync_time:
+            sync_str = self.last_sync_time.strftime('%H:%M')
+            sys_texts.append(f"Sync:{sync_str}")
+        sys_texts.append(f"Total:{len(self.images)}")
+
+        # Prepare progress texts
+        progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
+        countdown_text = f"{max(0, countdown):.0f}s"
+        progress_full = f"{progress_text} {countdown_text}"
+
+        # Call common rendering method
+        self._render_statusbar_common(
+            screen_width, screen_height, layout,
+            file_info_pos, system_info_pos, progress_pos,
+            file_texts, sys_texts, progress_full
+        )
+
     def _render_statusbar_common(self, screen_width: int, screen_height: int, layout: dict,
                                file_info_pos: str, system_info_pos: str, progress_pos: str,
                                file_texts: list, sys_texts: list, progress_text: str,
@@ -1300,14 +1365,7 @@ class SlideshowDisplay:
         else:
             physical_res = f"{self.screen_width}x{self.screen_height}"
 
-        # Helper to create status bar surface
-        def create_statusbar_surface(width, height):
-            s = pg.Surface((width, height), pg.SRCALPHA)
-            alpha = int(self.statusbar_opacity * 255)
-            s.fill((*self.statusbar_bg_color_base, alpha))
-            return s
-
-        # Format time as MM:SS
+        # Helper to format time as MM:SS
         def format_time(t):
             mins = int(t // 60)
             secs = int(t % 60)
@@ -1336,108 +1394,12 @@ class SlideshowDisplay:
             progress_pct = (current_time / duration) * 100
             progress_text += f" ({progress_pct:.0f}%)"
 
-        # Helper to measure width of texts
-        def measure_texts_width(texts, spacing=15):
-            width = 0
-            for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                width += text_surface.get_width() + spacing
-            return width
-
-        # Helper to draw text on left side of surface
-        def draw_texts_left(surface, texts):
-            y_offset = 2
-            x_offset = 10
-            for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                surface.blit(text_surface, (x_offset, y_offset))
-                x_offset += text_surface.get_width() + 15
-
-        # Helper to draw text on right side of surface
-        def draw_texts_right(surface, texts):
-            y_offset = 2
-            x_offset = screen_width - 10
-            for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                x_offset -= text_surface.get_width()
-                surface.blit(text_surface, (x_offset, y_offset))
-                x_offset -= 15
-
-        # Helper to draw centered text
-        def draw_text_center(surface, text):
-            text_surface = self.font.render(text, True, self.statusbar_text_color)
-            text_x = (screen_width - text_surface.get_width()) // 2
-            surface.blit(text_surface, (text_x, 2))
-
-
-        # Collect what to draw on each position (top/bottom)
-        # Each position can have: left content (file_info), center content (progress), right content (system_info)
-        position_content = {'top': {'left': None, 'center': None, 'right': None},
-                         'bottom': {'left': None, 'center': None, 'right': None}}
-
-        # Assign content to positions based on config
-        position_content[file_info_pos]['left'] = file_texts
-        position_content[system_info_pos]['right'] = sys_texts
-        position_content[progress_pos]['center'] = progress_text
-
-        # Draw each position
-        for pos in ['top', 'bottom']:
-            content = position_content[pos]
-            if content['left'] is None and content['center'] is None and content['right'] is None:
-                continue  # Nothing to draw on this position
-
-            # Create surface for this position
-            surface = create_statusbar_surface(screen_width, self.statusbar_height)
-            y = 0 if pos == 'top' else screen_height - self.statusbar_height
-
-            # Pre-calculate widths to check for overlaps
-            left_width = measure_texts_width(content['left']) if content['left'] else 0
-            right_width = measure_texts_width(content['right']) if content['right'] else 0
-
-            # Render center text to get its width
-            center_width = 0
-            center_x = 0
-            if content['center']:
-                center_surface = self.font.render(content['center'], True, self.statusbar_text_color)
-                center_width = center_surface.get_width()
-                center_x = (screen_width - center_width) // 2
-
-            # Determine which content can be drawn without overlap
-            # Priority: left > right > center
-            draw_center = True
-            draw_right = True
-
-            # Check if center overlaps with left
-            if content['center'] and center_x < left_width + 20:
-                draw_center = False
-
-            # Check if center overlaps with right (right starts at screen_width - right_width - 10)
-            if content['center'] and center_x + center_width > screen_width - right_width - 20:
-                draw_center = False
-
-            # If center is not drawn, check if right overlaps with left
-            if not draw_center and content['right'] and screen_width - right_width - 10 < left_width + 20:
-                draw_right = False
-
-            # Now draw the content
-            if content['left']:
-                draw_texts_left(surface, content['left'])
-
-            if draw_center and content['center']:
-                draw_text_center(surface, content['center'])
-
-            if draw_right and content['right']:
-                draw_texts_right(surface, content['right'])
-
-            # Clear the status bar area on screen first to avoid artifacts from previous semi-transparent draws
-            clear_surface = pg.Surface((screen_width, self.statusbar_height))
-            clear_surface.fill(self.bg_color)
-            target = self.virtual_screen if self.rotation_mode == 'software' else self.screen
-            target.blit(clear_surface, (0, y))
-            # Then blit the semi-transparent status bar
-            target.blit(surface, (0, y))
-
-
+        # Call common rendering method
+        self._render_statusbar_common(
+            screen_width, screen_height, layout,
+            file_info_pos, system_info_pos, progress_pos,
+            file_texts, sys_texts, progress_text, text_spacing=15
+        )
     def _signal_handler(self, signum, frame):
         """Handle signals for clean shutdown"""
         logger.info("Received signal, shutting down...")
