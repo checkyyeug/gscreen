@@ -7,19 +7,19 @@
         "background_color": [0, 0, 0],
         "hide_mouse": true,
         "show_statusbar": true,
+        "rotation_mode": "software",
         "rotation": 0,
-        "rotation_mode": "hardware",
         "statusbar_layout": {
-            "opacity": 0.3,
+            "opacity": 0.2,
             "landscape": {
-                "file_info_position": "top",
                 "system_info_position": "bottom",
-                "progress_position": "bottom"
+                "progress_position": "bottom",
+                "file_info_position": "bottom"
             },
             "portrait": {
-                "file_info_position": "bottom",
-                "system_info_position": "top",
-                "progress_position": "top"
+                "system_info_position": "bottom",
+                "progress_position": "top",
+                "file_info_position": "bottom"
             }
         }
     },
@@ -34,12 +34,12 @@
         "stop": "23:00"
     },
     "audio": {
-        "enabled": false,
+        "enabled": true,
         "device": "hdmi",
         "volume": 50
     },
     "sync": {
-        "check_interval_minutes": 1,
+        "check_interval_minutes": 3,
         "local_cache_dir": "./media",
         "download_on_start": false
     },
