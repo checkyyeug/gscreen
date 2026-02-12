@@ -1277,8 +1277,17 @@ class SlideshowDisplay:
         # Load images
         self.images = self.load_images(cache_dir)
 
+        # If no images found, try to sync first
         if not self.images:
-            logger.warning("No images to display")
+            logger.warning("No media files found, attempting sync...")
+            from gdrive_sync import GoogleDriveSync
+            sync = GoogleDriveSync()
+            sync.sync()
+            # Reload images after sync
+            self.images = self.load_images(cache_dir)
+
+        if not self.images:
+            logger.warning("No media files to display even after sync. Please check your Google Drive folder.")
             return
 
         self.running = True
