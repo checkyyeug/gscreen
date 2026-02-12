@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Slideshow Display Module
-Displays images on specified HDMI output with fullscreen borderless window
+Displays images on HDMI output using framebuffer (no X11/desktop required)
 """
 
 import os
 import json
 import logging
 import time
+import sys
+import signal
 from pathlib import Path
 from typing import Optional, Tuple
 import random
@@ -24,6 +26,9 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Use SDL framebuffer driver (no X11 required)
+os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon')
 
 
 class SlideshowDisplay:
@@ -56,29 +61,54 @@ class SlideshowDisplay:
             logger.error(f"Invalid JSON in settings file: {e}")
             raise
 
-    def _get_display_env(self, hdmi_port: int) -> dict:
-        """Get environment variables for specific HDMI output"""
-        # HDMI ports on Raspberry Pi
-        # HDMI0 is usually :0, HDMI1 is usually :1
-        display_num = hdmi_port if hdmi_port in [0, 1] else 0
-        return {
-            'DISPLAY': f':{display_num}',
-            'SDL_VIDEO_FULLSCREEN_HEAD': str(display_num)
-        }
+    def _check_framebuffer(self) -> bool:
+        """Check if framebuffer device is accessible"""
+        fb_device = '/dev/fb0'
+        if not os.path.exists(fb_device):
+            logger.error(f"Framebuffer device not found: {fb_device}")
+            logger.error("Make sure you're running on Raspberry Pi with HDMI connected")
+            return False
+
+        if not os.access(fb_device, os.R_OK | os.W_OK):
+            logger.error(f"No permission to access {fb_device}")
+            logger.error("Add user to video group: sudo usermod -a -G video $USER")
+            logger.error("Or run with sudo (not recommended)")
+            return False
+
+        return True
+
+    def _setup_framebuffer(self):
+        """Setup framebuffer display environment"""
+        # Use fbcon driver for framebuffer access
+        os.environ['SDL_VIDEODRIVER'] = 'fbcon'
+        os.environ['SDL_FBDEV'] = '/dev/fb0'
+
+        # Disable mouse cursor (not needed in framebuffer mode)
+        os.environ['SDL_NOMOUSE'] = '1'
+
+        # Try to get framebuffer resolution directly
+        try:
+            with open('/sys/class/graphics/fb0/virtual_size', 'r') as f:
+                resolution = f.read().strip()
+                width, height = map(int, resolution.split(','))
+                logger.info(f"Framebuffer resolution from sysfs: {width}x{height}")
+                return width, height
+        except Exception as e:
+            logger.warning(f"Could not read framebuffer resolution: {e}")
+            return None, None
 
     def init_display(self):
-        """Initialize pygame display on specified HDMI port"""
+        """Initialize pygame display using framebuffer (no X11 required)"""
         if pygame is None:
             raise ImportError("pygame is not installed. Install with: pip install pygame")
 
-        hdmi_port = self.display_settings.get('hdmi_port', 1)
-        display_env = self._get_display_env(hdmi_port)
+        # Check framebuffer access
+        if not self._check_framebuffer():
+            raise RuntimeError("Cannot access framebuffer device")
 
-        # Update environment for this process
-        for key, value in display_env.items():
-            os.environ[key] = value
-
-        logger.info(f"Initializing display on HDMI{hdmi_port} ({display_env['DISPLAY']})")
+        # Setup framebuffer environment
+        fb_width, fb_height = self._setup_framebuffer()
+        logger.info("Initializing display using framebuffer (/dev/fb0)")
 
         # Initialize pygame
         pygame.init()
@@ -233,8 +263,17 @@ class SlideshowDisplay:
             logger.error(f"Error displaying {image_path}: {e}")
             return False
 
+    def _signal_handler(self, signum, frame):
+        """Handle signals for clean shutdown"""
+        logger.info("Received signal, shutting down...")
+        self.running = False
+
     def run(self, cache_dir: str):
         """Main slideshow loop"""
+        # Setup signal handlers for clean shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
         self.init_display()
 
         # Load images
@@ -256,7 +295,7 @@ class SlideshowDisplay:
 
         while self.running:
             try:
-                # Handle events
+                # Handle events (limited support in framebuffer mode)
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
@@ -267,6 +306,9 @@ class SlideshowDisplay:
                         elif event.key == pygame.K_SPACE:
                             # Skip to next image
                             last_change = 0
+                        elif event.key == pygame.K_q:
+                            logger.info("Q pressed, exiting...")
+                            self.running = False
 
                 current_time = time.time()
 

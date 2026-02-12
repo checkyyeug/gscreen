@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
 gScreen - Google Drive Photo Slideshow for Raspberry Pi 4
-Displays photos from Google Drive on HDMI1 output
+Displays photos from Google Drive on HDMI output using framebuffer (no desktop required)
 
 Usage:
     python main.py [--sync-only] [--display-only]
+
+Requirements:
+    - Add user to video group: sudo usermod -a -G video $USER
+    - Reboot after adding to video group
+    - HDMI display must be connected
 """
 
 import os
@@ -20,6 +25,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Use SDL framebuffer driver (no X11/desktop required)
+os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon')
 
 
 def check_dependencies():
@@ -93,11 +101,21 @@ def create_default_settings(path: str):
     logger.warning("Please edit settings.json and add your Google Drive URL!")
 
 
-def setup_display(hdmi_port: int):
-    """Set up environment for specific HDMI output"""
-    display_num = hdmi_port if hdmi_port in [0, 1] else 1
-    os.environ['DISPLAY'] = f':{display_num}'
-    logger.info(f"Set DISPLAY to :{display_num} (HDMI{hdmi_port})")
+def check_framebuffer():
+    """Check if framebuffer is accessible"""
+    fb_device = '/dev/fb0'
+    if not os.path.exists(fb_device):
+        logger.error(f"Framebuffer device not found: {fb_device}")
+        logger.error("Make sure HDMI is connected and the system is running on Raspberry Pi")
+        return False
+
+    if not os.access(fb_device, os.R_OK | os.W_OK):
+        logger.error(f"No permission to access {fb_device}")
+        logger.error("Add user to video group: sudo usermod -a -G video $USER")
+        logger.error("Then logout and login again (or reboot)")
+        return False
+
+    return True
 
 
 def main():
@@ -140,9 +158,12 @@ def main():
     if not check_dependencies():
         sys.exit(1)
 
-    # Set up display environment
-    hdmi_port = settings['display']['hdmi_port']
-    setup_display(hdmi_port)
+    # Check framebuffer access
+    if not check_framebuffer():
+        sys.exit(1)
+
+    # Note: hdmi_port setting is kept for compatibility but not used in framebuffer mode
+    # The system will use /dev/fb0 which corresponds to the active HDMI output
 
     # Import modules after environment setup
     from gdrive_sync import GoogleDriveSync
