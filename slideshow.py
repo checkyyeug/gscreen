@@ -3,6 +3,7 @@
 Slideshow Display Module
 Displays images on HDMI output
 Auto-detects best display method (framebuffer or X11)
+With status bar showing file info, system info, etc.
 """
 
 import os
@@ -11,8 +12,10 @@ import logging
 import time
 import sys
 import signal
+import subprocess
+import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import random
 
 try:
@@ -30,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class SlideshowDisplay:
-    """Fullscreen slideshow display for HDMI output"""
+    """Fullscreen slideshow display for HDMI output with status bar"""
 
     def __init__(self, settings_path: str = "settings.json"):
         self.settings = self._load_settings(settings_path)
@@ -41,13 +44,27 @@ class SlideshowDisplay:
         self.scale_mode = self.slideshow_settings['scale_mode']
         self.bg_color = tuple(self.display_settings['background_color'])
         self.hide_mouse = self.display_settings.get('hide_mouse', True)  # Default: True
+        self.show_statusbar = self.display_settings.get('show_statusbar', True)  # Default: True
 
+        # Status bar settings
+        self.statusbar_height = 30
+        self.statusbar_bg_color = (30, 30, 30)
+        self.statusbar_text_color = (200, 200, 200)
+        self.statusbar_font_size = 14
+
+        # Runtime state
         self.running = False
         self.current_image_index = 0
         self.images: list[Path] = []
         self.screen = None
         self.screen_info = None
         self.display_mode = None  # 'fbcon', 'x11', or 'sdl-default'
+        self.font = None
+        self.last_sync_time = None
+
+        # Current image info
+        self.current_image_path = None
+        self.current_image_info = {}
 
     def _load_settings(self, path: str) -> dict:
         """Load settings from JSON file"""
@@ -60,6 +77,134 @@ class SlideshowDisplay:
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in settings file: {e}")
             raise
+
+    def _get_wifi_signal(self) -> str:
+        """Get WiFi signal strength in dBm"""
+        try:
+            # Try to get WiFi signal from /proc/net/wireless
+            for interface in ['wlan0', 'wlan1', 'wlp1s0', 'wlo1']:
+                path = f'/proc/net/wireless'
+                if os.path.exists(path):
+                    with open(path, 'r') as f:
+                        lines = f.readlines()
+                        if len(lines) >= 3:
+                            # Parse signal quality (3rd line, 3rd value)
+                            parts = lines[2].split()
+                            if len(parts) >= 3:
+                                signal = int(parts[2])
+                                # Convert to dBm (approximately)
+                                dbm = signal - 100
+                                return f"{dbm} dBm"
+
+            # Alternative: try iwconfig
+            result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=1)
+            if 'Signal level' in result.stdout:
+                import re
+                match = re.search(r'Signal level=(-?\d+) dBm', result.stdout)
+                if match:
+                    return f"{match.group(1)} dBm"
+        except:
+            pass
+        return "N/A"
+
+    def _get_file_info(self, image_path: Path) -> dict:
+        """Get file information"""
+        info = {
+            'name': image_path.name,
+            'size': '',
+            'modified': '',
+            'format': image_path.suffix.upper(),
+            'dimensions': ''
+        }
+
+        try:
+            # File size
+            size_bytes = image_path.stat().st_size
+            if size_bytes < 1024:
+                info['size'] = f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                info['size'] = f"{size_bytes / 1024:.1f} KB"
+            else:
+                info['size'] = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+            # Modification date
+            mtime = image_path.stat().st_mtime
+            mod_time = datetime.datetime.fromtimestamp(mtime)
+            info['modified'] = mod_time.strftime("%Y-%m-%d %H:%M")
+
+            # Image dimensions
+            if Image is not None:
+                with Image.open(image_path) as img:
+                    info['dimensions'] = f"{img.width}x{img.height}"
+        except Exception as e:
+            logger.debug(f"Error getting file info: {e}")
+
+        return info
+
+    def _init_font(self):
+        """Initialize font for status bar"""
+        if self.font is None:
+            try:
+                # Try to use a system font
+                self.font = pygame.font.SysFont('DejaVuSans', self.statusbar_font_size, bold=True)
+            except:
+                # Fallback to default font
+                self.font = pygame.font.Font(None, self.statusbar_font_size)
+
+    def _draw_statusbar(self, countdown: float = 0):
+        """Draw status bar at bottom of screen"""
+        if not self.show_statusbar or self.screen is None:
+            return
+
+        self._init_font()
+
+        screen_width = self.screen_info.current_w
+        screen_height = self.screen_info.current_h
+
+        # Create status bar surface
+        statusbar_y = screen_height - self.statusbar_height
+        statusbar_rect = pygame.Rect(0, statusbar_y, screen_width, self.statusbar_height)
+
+        # Draw status bar background
+        pygame.draw.rect(self.screen, self.statusbar_bg_color, statusbar_rect)
+
+        # Left side info (file info)
+        left_texts = []
+        if self.current_image_info:
+            left_texts = [
+                f"Name: {self.current_image_info.get('name', '')}",
+                f"Date: {self.current_image_info.get('modified', '')}",
+                f"Size: {self.current_image_info.get('size', '')}",
+                f"Format: {self.current_image_info.get('format', '')}",
+                f"Dim: {self.current_image_info.get('dimensions', '')}"
+            ]
+
+        # Right side info (system info)
+        right_texts = [
+            f"Res: {screen_width}x{screen_height}",
+            f"Time: {datetime.datetime.now().strftime('%H:%M:%S')}",
+            f"WiFi: {self._get_wifi_signal()}",
+            f"Img: {self.current_image_index + 1}/{len(self.images)}",
+            f"Next: {max(0, countdown):.0f}s",
+        ]
+        if self.last_sync_time:
+            sync_str = self.last_sync_time.strftime('%H:%M')
+            right_texts.append(f"Sync: {sync_str}")
+
+        # Render left text
+        x_offset = 10
+        y_offset = statusbar_y + 2
+        for text in left_texts:
+            surface = self.font.render(text, True, self.statusbar_text_color)
+            self.screen.blit(surface, (x_offset, y_offset))
+            x_offset += surface.get_width() + 15
+
+        # Render right text (from right to left)
+        x_offset = screen_width - 10
+        for text in reversed(right_texts):
+            surface = self.font.render(text, True, self.statusbar_text_color)
+            x_offset -= surface.get_width() + 15
+            self.screen.blit(surface, (x_offset, y_offset))
 
     def _is_x11_running(self) -> bool:
         """Check if X11 is running"""
@@ -235,7 +380,7 @@ class SlideshowDisplay:
 
                 logger.info(f"Display resolution: {screen_width}x{screen_height}")
 
-                # Set display mode
+                # Set display mode (account for status bar)
                 flags = pygame.FULLSCREEN | pygame.NOFRAME
                 self.screen = pygame.display.set_mode((screen_width, screen_height), flags)
 
@@ -292,8 +437,11 @@ class SlideshowDisplay:
 
         Returns: (x, y, width, height)
         """
+        # Account for status bar
+        effective_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
+
         img_ratio = img_width / img_height
-        screen_ratio = screen_width / screen_height
+        screen_ratio = screen_width / effective_height
 
         if img_ratio > screen_ratio:
             # Image is wider - fit to width
@@ -301,12 +449,12 @@ class SlideshowDisplay:
             new_height = int(screen_width / img_ratio)
         else:
             # Image is taller - fit to height
-            new_height = screen_height
-            new_width = int(screen_height * img_ratio)
+            new_height = effective_height
+            new_width = int(effective_height * img_ratio)
 
         # Center on screen
         x = (screen_width - new_width) // 2
-        y = (screen_height - new_height) // 2
+        y = (effective_height - new_height) // 2
 
         return x, y, new_width, new_height
 
@@ -317,8 +465,11 @@ class SlideshowDisplay:
         Returns: (source_x, source_y, source_w, source_h)
         For fill mode, we return crop coordinates
         """
+        # Account for status bar
+        effective_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
+
         img_ratio = img_width / img_height
-        screen_ratio = screen_width / screen_height
+        screen_ratio = screen_width / effective_height
 
         if img_ratio > screen_ratio:
             # Image is wider - crop sides
@@ -338,6 +489,10 @@ class SlideshowDisplay:
     def display_image(self, image_path: Path) -> bool:
         """Load and display an image"""
         try:
+            # Get file info for status bar
+            self.current_image_path = image_path
+            self.current_image_info = self._get_file_info(image_path)
+
             # Use PIL for better image loading
             if Image is not None:
                 pil_image = Image.open(image_path)
@@ -358,7 +513,7 @@ class SlideshowDisplay:
                     # Resize and place
                     pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
                     # Create background and paste
-                    background = Image.new('RGB', (screen_width, screen_height), self.bg_color)
+                    background = Image.new('RGB', (screen_width, screen_height - (self.statusbar_height if self.show_statusbar else 0)), self.bg_color)
                     background.paste(pil_image, (x, y))
                     pil_image = background
                 elif self.scale_mode == 'fill':
@@ -367,9 +522,11 @@ class SlideshowDisplay:
                         img_width, img_height, screen_width, screen_height
                     )
                     pil_image = pil_image.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
-                    pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+                    target_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
+                    pil_image = pil_image.resize((screen_width, target_height), Image.Resampling.LANCZOS)
                 else:  # stretch
-                    pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+                    target_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
+                    pil_image = pil_image.resize((screen_width, target_height), Image.Resampling.LANCZOS)
 
                 # Convert to pygame surface
                 img_surface = pygame.image.fromstring(
@@ -383,14 +540,19 @@ class SlideshowDisplay:
                 screen_width = self.screen_info.current_w
                 screen_height = self.screen_info.current_h
 
+                target_height = screen_height - (self.statusbar_height if self.show_statusbar else 0)
                 img_surface = pygame.transform.scale(
                     img_surface,
-                    (screen_width, screen_height)
+                    (screen_width, target_height)
                 )
 
             # Display
             self.screen.fill(self.bg_color)
             self.screen.blit(img_surface, (0, 0))
+
+            # Draw status bar
+            self._draw_statusbar()
+
             pygame.display.flip()
 
             logger.debug(f"Displayed: {image_path.name}")
@@ -423,6 +585,7 @@ class SlideshowDisplay:
         self.running = True
         last_change = time.time()
         last_sync = time.time()
+        last_statusbar_update = time.time()
 
         logger.info(f"Starting slideshow with {len(self.images)} images")
 
@@ -453,6 +616,14 @@ class SlideshowDisplay:
 
                 current_time = time.time()
 
+                # Update status bar time/wifi every second
+                if current_time - last_statusbar_update >= 1.0:
+                    if self.show_statusbar and self.screen is not None:
+                        countdown = self.interval - (current_time - last_change)
+                        self._draw_statusbar(countdown)
+                        pygame.display.flip()
+                    last_statusbar_update = current_time
+
                 # Check if it's time to change image
                 if current_time - last_change >= self.interval:
                     if self.images:
@@ -463,6 +634,7 @@ class SlideshowDisplay:
                         # Move to next image
                         self.current_image_index = (self.current_image_index + 1) % len(self.images)
                         last_change = current_time
+                        last_statusbar_update = current_time  # Reset statusbar timer
 
                 # Periodic sync check (every minute)
                 sync_interval = self.settings['sync']['check_interval_minutes'] * 60
@@ -470,13 +642,14 @@ class SlideshowDisplay:
                     logger.info("Checking for new images...")
                     sync.sync()
                     self.images = self.load_images(cache_dir)
+                    self.last_sync_time = datetime.datetime.now()
                     # Reset index if out of bounds
                     if self.current_image_index >= len(self.images):
                         self.current_image_index = 0
                     last_sync = current_time
 
                 # Small sleep to prevent high CPU usage
-                time.sleep(0.1)
+                time.sleep(0.05)
 
             except KeyboardInterrupt:
                 logger.info("Interrupted by user")

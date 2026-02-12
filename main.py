@@ -78,7 +78,8 @@ def create_default_settings(path: str):
             "fullscreen": True,
             "borderless": True,
             "background_color": [0, 0, 0],
-            "hide_mouse": True
+            "hide_mouse": True,
+            "show_statusbar": True
         },
         "slideshow": {
             "interval_seconds": 5,
