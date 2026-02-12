@@ -149,6 +149,10 @@ sudo journalctl -u gscreen -f
 | `display.rotation_mode` | Rotation method: "hardware" or "software" | "hardware" |
 | `slideshow.interval_seconds` | Time between images/videos | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
+| `schedule.enabled` | Enable scheduled on/off times | false |
+| `schedule.days` | Days of week to run: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] | All days |
+| `schedule.start` | Start time (HH:MM format) | "07:00" |
+| `schedule.stop` | Stop time (HH:MM format) | "23:00" |
 | `audio.enabled` | Enable audio playback for videos | false |
 | `audio.device` | Audio output: "hdmi" or "local" | "hdmi" |
 | `audio.volume` | Audio volume (0-100) | 50 |
@@ -180,6 +184,35 @@ Audio support is included in the installation script (via ffmpeg). To enable aud
 ```bash
 sudo apt install ffmpeg
 ```
+
+### Schedule Configuration
+
+Configure automatic on/off times for the slideshow. Useful for digital signage or photo frames that should only run during certain hours.
+
+```json
+"schedule": {
+    "enabled": true,
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    "start": "07:00",
+    "stop": "23:00"
+}
+```
+
+**Settings:**
+- `enabled` - Enable/disable scheduling (default: false)
+- `days` - Days of week to run: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
+- `start` - Start time in HH:MM format (24-hour)
+- `stop` - Stop time in HH:MM format (24-hour)
+
+**Behavior:**
+- During active time: Normal slideshow operation
+- Outside active time: Screen goes to sleep (black screen), playback stops
+- When waking up: Resumes from current position
+
+**Examples:**
+- Business hours (weekdays only): `"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "start": "09:00", "stop": "18:00"`
+- All day: `"days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "start": "00:00", "stop": "23:59"`
+- Weekend only: `"days": ["Sat", "Sun"], "start": "08:00", "stop": "22:00"`
 
 ### Status Bar Layout Configuration
 

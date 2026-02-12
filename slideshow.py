@@ -68,6 +68,13 @@ class SlideshowDisplay:
         self.audio_device = self.audio_settings.get('device', 'hdmi')  # 'hdmi' or 'local' (3.5mm jack)
         self.audio_volume = self.audio_settings.get('volume', 50)
 
+        # Schedule settings
+        self.schedule_settings = self.settings.get('schedule', {})
+        self.schedule_enabled = self.schedule_settings.get('enabled', False)
+        self.schedule_days = self.schedule_settings.get('days', ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+        self.schedule_start = self.schedule_settings.get('start', '07:00')
+        self.schedule_stop = self.schedule_settings.get('stop', '23:00')
+
         # Status bar layout settings for landscape and portrait
         default_layout = {
             'opacity': 0.3,
@@ -98,6 +105,7 @@ class SlideshowDisplay:
         self.display_mode = None  # 'fbcon', 'x11', or 'sdl-default'
         self.font = None
         self.last_sync_time = None
+        self.screen_asleep = False  # Track if screen is in sleep mode
 
         # Current image info
         self.current_image_path = None
@@ -143,6 +151,63 @@ class SlideshowDisplay:
             pass
 
         return "N/A"
+
+    def _is_active_time(self) -> bool:
+        """Check if current time is within the scheduled active time"""
+        if not self.schedule_enabled:
+            return True
+
+        try:
+            now = datetime.datetime.now()
+            day_abbr = now.strftime('%a')  # Mon, Tue, Wed, etc.
+
+            # Check if today is in the scheduled days
+            if day_abbr not in self.schedule_days:
+                return False
+
+            # Parse start and stop times
+            start_hour, start_min = map(int, self.schedule_start.split(':'))
+            stop_hour, stop_min = map(int, self.schedule_stop.split(':'))
+
+            # Create datetime objects for today's start and stop times
+            start_time = now.replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
+            stop_time = now.replace(hour=stop_hour, minute=stop_min, second=0, microsecond=0)
+
+            # Check if current time is within the active window
+            return start_time <= now < stop_time
+        except Exception as e:
+            logger.error(f"Error checking schedule: {e}")
+            return True  # Default to active if there's an error
+
+    def _set_screen_power(self, on: bool):
+        """Turn screen on or off"""
+        if self.screen is None:
+            return
+
+        pg = get_pygame()
+        if on:
+            # Wake up screen
+            if self.screen_asleep:
+                logger.info("Waking up screen")
+                self.screen_asleep = False
+                # Clear to black
+                self.screen.fill(self.bg_color)
+                pg.display.flip()
+        else:
+            # Put screen to sleep - fill with black
+            if not self.screen_asleep:
+                logger.info("Putting screen to sleep")
+                self.screen_asleep = True
+                # Fill entire screen with black
+                if self.rotation_mode == 'software' and self.virtual_screen is not None:
+                    self.virtual_screen.fill((0, 0, 0))
+                    if self.rotation in [90, 180, 270]:
+                        self._apply_rotation_to_screen()
+                    else:
+                        self.screen.blit(self.virtual_screen, (0, 0))
+                else:
+                    self.screen.fill((0, 0, 0))
+                pg.display.flip()
 
     def _get_file_info(self, image_path: Path) -> dict:
         """Get file information"""
@@ -1262,6 +1327,19 @@ class SlideshowDisplay:
                             self.running = False
 
                 current_time = time.time()
+
+                # Check schedule - sleep if outside active time
+                is_active = self._is_active_time()
+                if not is_active:
+                    if not self.screen_asleep:
+                        self._set_screen_power(False)
+                    time.sleep(5)  # Sleep longer when inactive
+                    continue
+                else:
+                    if self.screen_asleep:
+                        self._set_screen_power(True)
+                        # Force display first image when waking up
+                        last_change = 0
 
                 # Update status bar time/wifi every second
                 if current_time - last_statusbar_update >= 1.0:

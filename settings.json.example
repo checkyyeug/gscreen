@@ -27,6 +27,12 @@
         "interval_seconds": 5,
         "scale_mode": "fit"
     },
+    "schedule": {
+        "enabled": false,
+        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "start": "07:00",
+        "stop": "23:00"
+    },
     "audio": {
         "enabled": false,
         "device": "hdmi",
