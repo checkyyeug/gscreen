@@ -27,6 +27,11 @@
         "interval_seconds": 5,
         "scale_mode": "fit"
     },
+    "audio": {
+        "enabled": false,
+        "device": "hdmi",
+        "volume": 50
+    },
     "sync": {
         "check_interval_minutes": 1,
         "local_cache_dir": "./photos",

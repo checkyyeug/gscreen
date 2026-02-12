@@ -146,13 +146,36 @@ sudo journalctl -u gscreen -f
 | `display.rotation_mode` | Rotation method: "hardware" or "software" | "hardware" |
 | `slideshow.interval_seconds` | Time between images/videos | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
+| `audio.enabled` | Enable audio playback for videos | false |
+| `audio.device` | Audio output: "hdmi" or "local" | "hdmi" |
+| `audio.volume` | Audio volume (0-100) | 50 |
 | `sync.check_interval_minutes` | Sync check interval | 1 |
 | `sync.local_cache_dir` | Local media cache directory | ./photos |
 | `supported_formats` | File extensions to display | jpg,jpeg,png,gif,bmp,webp,tiff,mp4,avi,mov,mkv,webm |
 
 **Supported formats:**
 - Images: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, TGA, PBM, PGM, PPM, PNM, ICO, PCX, DIB, XBM
-- Videos: MP4, AVI, MOV, MKV, WebM (via OpenCV)
+- Videos: MP4, AVI, MOV, MKV, WebM (via OpenCV, audio via ffplay when enabled)
+
+### Audio Configuration
+
+To enable audio for video playback, install ffmpeg:
+```bash
+sudo apt install ffmpeg
+```
+
+Then configure audio in settings.json:
+```json
+"audio": {
+    "enabled": true,
+    "device": "hdmi",
+    "volume": 50
+}
+```
+
+**Audio devices:**
+- `hdmi` - Output audio through HDMI (default)
+- `local` - Output audio through 3.5mm jack
 
 ### Status Bar Information
 

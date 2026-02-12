@@ -62,6 +62,12 @@ class SlideshowDisplay:
         self.rotation = self.display_settings.get('rotation', 0)  # Default: 0 (no rotation)
         self.rotation_mode = self.display_settings.get('rotation_mode', 'hardware')  # 'hardware' or 'software'
 
+        # Audio settings
+        self.audio_settings = self.settings.get('audio', {})
+        self.audio_enabled = self.audio_settings.get('enabled', False)
+        self.audio_device = self.audio_settings.get('device', 'hdmi')  # 'hdmi' or 'local' (3.5mm jack)
+        self.audio_volume = self.audio_settings.get('volume', 50)
+
         # Status bar layout settings for landscape and portrait
         default_layout = {
             'opacity': 0.3,
@@ -787,7 +793,77 @@ class SlideshowDisplay:
             return False
 
     def display_video(self, video_path: Path) -> bool:
-        """Load and display a video file using OpenCV"""
+        """Load and display a video file"""
+        # If audio is enabled, use ffplay for audio+video playback
+        if self.audio_enabled:
+            return self._display_video_with_audio(video_path)
+        # Otherwise use OpenCV for video-only playback
+        return self._display_video_opencv(video_path)
+
+    def _display_video_with_audio(self, video_path: Path) -> bool:
+        """Play video with audio using ffplay"""
+        import subprocess
+        import os
+
+        try:
+            # Get video info for status bar
+            self.current_image_path = video_path
+            self.current_image_info = self._get_video_info(video_path)
+
+            logger.info(f"Playing video with audio: {video_path.name}")
+
+            # Build ffplay command
+            # Use DRM/KMS display if available, otherwise use X11
+            display_env = os.environ.get('DISPLAY', '')
+
+            # Audio output device: 0=HDMI, 1=local (3.5mm jack)
+            audio_device_map = {'hdmi': '0', 'local': '1'}
+            alsa_device = audio_device_map.get(self.audio_device, '0')
+
+            # Build ffplay command
+            ffplay_cmd = [
+                'ffplay',
+                '-vn',  # Don't play video (we'll handle display)
+                '-nodisp',  # Don't display ffplay window
+                '-autoexit',
+                '-volume', str(self.audio_volume),
+                '-audio_demuxer', 'ffmpeg',
+                '-i', str(video_path),
+                '-ao', f'alsa:{alsa_device}'
+            ]
+
+            # Start ffplay for audio in background
+            ffplay_process = subprocess.Popen(
+                ffplay_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
+
+            # Play video without audio using OpenCV
+            result = self._display_video_opencv(video_path, skip_audio_check=True)
+
+            # Clean up ffplay process
+            try:
+                ffplay_process.terminate()
+                ffplay_process.wait(timeout=2)
+            except:
+                try:
+                    ffplay_process.kill()
+                except:
+                    pass
+
+            return result
+
+        except FileNotFoundError:
+            logger.warning("ffplay not found. Install ffmpeg for audio support. Falling back to video-only.")
+            return self._display_video_opencv(video_path)
+        except Exception as e:
+            logger.error(f"Error playing video with audio: {e}")
+            return self._display_video_opencv(video_path)
+
+    def _display_video_opencv(self, video_path: Path, skip_audio_check: bool = False) -> bool:
+        """Load and display a video file using OpenCV (video only)"""
         pg = get_pygame()
         if cv2 is None:
             logger.error("OpenCV (cv2) is not installed. Install with: pip install opencv-python")
@@ -795,8 +871,9 @@ class SlideshowDisplay:
 
         try:
             # Get video info for status bar
-            self.current_image_path = video_path
-            self.current_image_info = self._get_video_info(video_path)
+            if not skip_audio_check:
+                self.current_image_path = video_path
+                self.current_image_info = self._get_video_info(video_path)
 
             # Video uses full virtual screen (status bar is overlay)
             video_display_y = 0
