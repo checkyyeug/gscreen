@@ -961,16 +961,18 @@ class SlideshowDisplay:
         screen_width = self.screen_width
         screen_height = self.screen_height
 
-        # Get video layout configuration
-        video_layout = self.statusbar_layout.get('video', {
-            'file_info_position': 'top',
-            'system_info_position': 'bottom',
-            'progress_position': 'bottom'
+        # Determine orientation and get corresponding layout (same as images)
+        is_portrait = self.rotation in [90, 270]
+        orientation = 'portrait' if is_portrait else 'landscape'
+        layout = self.statusbar_layout.get(orientation, {
+            'file_info_position': 'top' if not is_portrait else 'bottom',
+            'system_info_position': 'top' if not is_portrait else 'bottom',
+            'progress_position': 'bottom' if not is_portrait else 'top'
         })
 
-        file_info_pos = video_layout.get('file_info_position', 'top')
-        system_info_pos = video_layout.get('system_info_position', 'bottom')
-        progress_pos = video_layout.get('progress_position', 'bottom')
+        file_info_pos = layout.get('file_info_position', 'top' if not is_portrait else 'bottom')
+        system_info_pos = layout.get('system_info_position', 'top' if not is_portrait else 'bottom')
+        progress_pos = layout.get('progress_position', 'bottom' if not is_portrait else 'top')
 
         if self.rotation in [90, 270]:
             physical_res = f"{self.screen_height}x{self.screen_width}"
