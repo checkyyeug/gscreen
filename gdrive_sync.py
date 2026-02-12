@@ -336,9 +336,7 @@ class GoogleDriveSync:
                     files_to_download.append(filename)
                     logger.info(f"Will download updated file: {filename}")
 
-            if not files_to_download:
-                logger.info("No new or changed files to download")
-                return True
+            # Even if no downloads needed, continue to check for deleted files
 
             # Use resume=True to skip already downloaded files
             logger.info(f"Downloading {len(files_to_download)} file(s) from Google Drive...")
