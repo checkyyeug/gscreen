@@ -1306,6 +1306,10 @@ class SlideshowDisplay:
         from gdrive_sync import GoogleDriveSync
         sync = GoogleDriveSync()
 
+        # Check schedule at startup - if outside active time, show countdown
+        if not self._is_active_time():
+            self._show_sleep_countdown()
+
         # Display first media immediately
         if self.images:
             media_path = self.images[self.current_image_index]
@@ -1504,6 +1508,107 @@ class SlideshowDisplay:
             except Exception as e:
                 logger.error(f"Error in no-media wait mode: {e}", exc_info=True)
                 time.sleep(1)
+
+    def _show_sleep_countdown(self):
+        """Display 60-second countdown when outside schedule, then go to sleep"""
+        import time
+        pg = get_pygame()
+
+        self._init_font()
+
+        # Create fonts for the countdown
+        try:
+            large_font = pg.font.SysFont('DejaVuSans', 48, bold=True)
+            medium_font = pg.font.SysFont('DejaVuSans', 28, bold=True)
+        except:
+            large_font = pg.font.Font(None, 64)
+            medium_font = pg.font.Font(None, 40)
+
+        # Screen dimensions
+        screen_width = self.virt_width
+        screen_height = self.virt_height
+
+        # Countdown duration
+        countdown_seconds = 60
+        start_time = time.time()
+
+        logger.info("Outside schedule - showing sleep countdown...")
+
+        counting_down = True
+        while counting_down:
+            try:
+                # Handle events - allow early exit with ESC
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
+                        counting_down = False
+                        self.running = False
+                        return
+                    elif event.type == pg.KEYDOWN:
+                        if event.key == pg.K_ESCAPE:
+                            logger.info("ESC pressed, exiting...")
+                            counting_down = False
+                            self.running = False
+                            return
+
+                # Calculate remaining time
+                elapsed = time.time() - start_time
+                remaining = max(0, int(countdown_seconds - elapsed))
+
+                # Clear screen with background color
+                if self.virtual_screen:
+                    self.virtual_screen.fill(self.background_color)
+                else:
+                    self.screen.fill(self.background_color)
+
+                # Draw messages
+                # Main message
+                main_msg = "不在 Schedule 内"
+                main_surface = medium_font.render(main_msg, True, (255, 100, 100))
+                main_x = (screen_width - main_surface.get_width()) // 2
+                main_y = screen_height // 2 - 60
+
+                # Sub message
+                sub_msg = "准备 Sleep"
+                sub_surface = medium_font.render(sub_msg, True, (200, 200, 200))
+                sub_x = (screen_width - sub_surface.get_width()) // 2
+                sub_y = screen_height // 2
+
+                # Countdown
+                countdown_msg = f"{remaining} 秒"
+                countdown_surface = large_font.render(countdown_msg, True, (255, 255, 255))
+                countdown_x = (screen_width - countdown_surface.get_width()) // 2
+                countdown_y = screen_height // 2 + 60
+
+                # Blit messages
+                if self.virtual_screen:
+                    self.virtual_screen.blit(main_surface, (main_x, main_y))
+                    self.virtual_screen.blit(sub_surface, (sub_x, sub_y))
+                    self.virtual_screen.blit(countdown_surface, (countdown_x, countdown_y))
+                else:
+                    self.screen.blit(main_surface, (main_x, main_y))
+                    self.screen.blit(sub_surface, (sub_x, sub_y))
+                    self.screen.blit(countdown_surface, (countdown_x, countdown_y))
+
+                # Update display
+                if self.virtual_screen and self.physical_screen:
+                    pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.physical_screen)
+                pg.display.flip()
+
+                # Check if countdown is finished
+                if remaining <= 0:
+                    logger.info("Countdown finished, going to sleep")
+                    counting_down = False
+
+                # Small sleep
+                time.sleep(0.05)
+
+            except KeyboardInterrupt:
+                logger.info("Interrupted by user")
+                counting_down = False
+                self.running = False
+            except Exception as e:
+                logger.error(f"Error in countdown mode: {e}", exc_info=True)
+                time.sleep(0.1)
 
 
 def main():
