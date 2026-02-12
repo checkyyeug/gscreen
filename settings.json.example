@@ -41,7 +41,9 @@
     "sync": {
         "check_interval_minutes": 3,
         "local_cache_dir": "./media",
-        "download_on_start": false
+        "download_on_start": false,
+        "timezone_offset": 8,
+        "sync_system_time": true
     },
     "supported_formats": [
         ".jpg",

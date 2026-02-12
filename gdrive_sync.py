@@ -28,6 +28,9 @@ class GoogleDriveSync:
         self.supported_formats = set(ext.lower() for ext in self.settings['supported_formats'])
         self._current_files: Dict[str, str] = {}  # filename -> file hash
         self._drive_id = self._extract_drive_id(self.settings['google_drive_url'])
+        # Time sync settings
+        self.timezone_offset = self.settings['sync'].get('timezone_offset', 8)  # Default UTC+8
+        self.sync_system_time = self.settings['sync'].get('sync_system_time', True)
 
     def _load_settings(self, path: str) -> dict:
         """Load settings from JSON file"""
@@ -134,9 +137,14 @@ class GoogleDriveSync:
         - Compares modification times before downloading
         - Only downloads new/changed files
         - Deletes local files that no longer exist on Drive
+        - Syncs system time via NTP if enabled
         Returns True if any changes were made.
         """
         logger.info("Starting sync...")
+
+        # Sync system time if enabled
+        if self.sync_system_time:
+            self._sync_system_time()
 
         # Try rclone first for efficient sync (can list files with mod time without downloading)
         rclone_result = self._sync_with_rclone_check_only()
@@ -146,6 +154,76 @@ class GoogleDriveSync:
 
         # Fallback to gdown method
         return self._sync_with_gdown()
+
+    def _sync_system_time(self):
+        """Sync system time using NTP"""
+        import subprocess
+        try:
+            # Use timedatectl to sync time with NTP
+            logger.info(f"Syncing system time (UTC+{self.timezone_offset})...")
+            subprocess.run(['timedatectl', 'set-ntp', 'true'], check=True, capture_output=True)
+
+            # Set timezone if needed
+            tz_map = {
+                -12: 'Etc/GMT+12', -11: 'Etc/GMT+11', -10: 'Etc/GMT+10',
+                -9: 'Etc/GMT+9', -8: 'Etc/GMT+8', -7: 'Etc/GMT+7',
+                -6: 'Etc/GMT+6', -5: 'Etc/GMT+5', -4: 'Etc/GMT+4',
+                -3: 'Etc/GMT+3', -2: 'Etc/GMT+2', -1: 'Etc/GMT+1',
+                0: 'Etc/UTC', 1: 'Etc/GMT-1', 2: 'Etc/GMT-2',
+                3: 'Etc/GMT-3', 4: 'Etc/GMT-4', 5: 'Etc/GMT-5',
+                6: 'Etc/GMT-6', 7: 'Etc/GMT-7', 8: 'Etc/GMT-8',
+                9: 'Etc/GMT-9', 10: 'Etc/GMT-10', 11: 'Etc/GMT-11',
+                12: 'Etc/GMT-12', 13: 'Etc/GMT-13', 14: 'Etc/GMT-14'
+            }
+
+            # Common timezone mappings for positive offsets
+            common_tz = {
+                8: 'Asia/Shanghai',
+                9: 'Asia/Tokyo',
+                10: 'Australia/Sydney',
+                12: 'Pacific/Auckland',
+                -5: 'America/New_York',
+                -6: 'America/Chicago',
+                -7: 'America/Denver',
+                -8: 'America/Los_Angeles'
+            }
+
+            # Use common timezone if available, otherwise use GMT
+            tz = common_tz.get(self.timezone_offset, tz_map.get(self.timezone_offset, 'Etc/UTC'))
+
+            subprocess.run(['timedatectl', 'set-timezone', tz], check=True, capture_output=True)
+            logger.info(f"Timezone set to {tz} (UTC+{self.timezone_offset})")
+        except FileNotFoundError:
+            # timedatectl not available, try using ntpdate
+            try:
+                logger.info("timedatectl not available, trying ntpdate...")
+                subprocess.run(['ntpdate', '-u', 'pool.ntp.org'], capture_output=True, timeout=30)
+                logger.info("System time synced via ntpdate")
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                # ntpdate not available, try using Python NTP
+                self._sync_time_via_ntp()
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to sync time with timedatectl: {e}")
+            self._sync_time_via_ntp()
+        except Exception as e:
+            logger.warning(f"Failed to sync system time: {e}")
+
+    def _sync_time_via_ntp(self):
+        """Sync system time using Python NTP client"""
+        try:
+            import ntplib
+            ntp_client = ntplib.NTPClient()
+            response = ntp_client.request('pool.ntp.org', version=3)
+            ntp_time = datetime.fromtimestamp(response.tx_time)
+
+            # Set system time using date command
+            time_str = ntp_time.strftime('%Y-%m-%d %H:%M:%S')
+            subprocess.run(['sudo', 'date', '-s', time_str], capture_output=True)
+            logger.info(f"System time synced via NTP: {time_str}")
+        except ImportError:
+            logger.warning("ntplib not available, install with: pip install ntplib")
+        except Exception as e:
+            logger.warning(f"Failed to sync time via NTP: {e}")
 
     def _sync_with_rclone_check_only(self) -> bool:
         """
