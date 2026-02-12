@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installation script for gScreen on Raspberry Pi 4
+# Installation script for gScreen on Raspberry Pi
 
 set -e
 
@@ -20,6 +20,12 @@ fi
 
 PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
 echo "Found Python $PYTHON_VERSION"
+
+# Detect if running on Raspberry Pi
+if [ -f /proc/device-tree/model ]; then
+    MODEL=$(tr -d '\0' < /proc/device-tree/model)
+    echo "Detected: $MODEL"
+fi
 
 # Update system packages
 echo ""
@@ -72,9 +78,20 @@ cat > "$INSTALL_DIR/sync.sh" << 'EOF'
 #!/bin/bash
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 source "$SCRIPT_DIR/venv/bin/activate"
-python3 "$SCRIPT_DIR/download.py" "$@"
+python3 "$SCRIPT_DIR/main.py" --sync-only
 EOF
 chmod +x "$INSTALL_DIR/sync.sh"
+
+# Add user to video group for framebuffer access
+echo ""
+echo "Adding user to video group (required for display access)..."
+if ! groups $USER | grep -q '\bvideo\b'; then
+    sudo usermod -a -G video $USER
+    echo "User $USER added to video group"
+    echo "** IMPORTANT: Log out and log back in for this change to take effect **"
+else
+    echo "User $USER is already in video group"
+fi
 
 # Optional: Install rclone for better Google Drive sync
 echo ""
@@ -99,6 +116,10 @@ echo "========================================="
 echo "Installation complete!"
 echo "========================================="
 echo ""
+echo "Display mode will be auto-detected:"
+echo "  - With desktop: Uses X11"
+echo "  - Without desktop: Uses framebuffer (fbcon)"
+echo ""
 echo "To run gScreen:"
 echo "  ./run.sh"
 echo ""
@@ -106,6 +127,7 @@ echo "To sync only:"
 echo "  ./sync.sh"
 echo ""
 echo "Next steps:"
-echo "1. Edit settings.json and add your Google Drive URL"
-echo "2. Run: ./run.sh"
+echo "1. Log out and log back in (for video group)"
+echo "2. Edit settings.json and add your Google Drive URL"
+echo "3. Run: ./run.sh"
 echo ""

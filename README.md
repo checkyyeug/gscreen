@@ -2,12 +2,12 @@
 
 A lightweight photo slideshow application that displays images from Google Drive on HDMI output.
 
-**No desktop environment required** - runs directly on Raspberry Pi OS Lite using framebuffer.
+**Auto-detects display mode** - Works on Raspberry Pi OS with or without desktop.
 
 ## Features
 
 - Displays photos from Google Drive on HDMI output
-- Uses framebuffer directly - no X11/desktop required
+- **Auto-detects display mode**: X11 (with desktop) or framebuffer (headless)
 - Images scaled to fit/fill screen with aspect ratio preservation
 - Fullscreen borderless display
 - Configurable slideshow interval (default: 5 seconds)
@@ -22,6 +22,16 @@ A lightweight photo slideshow application that displays images from Google Drive
 - Python 3.8+
 - Internet connection for Google Drive sync
 - **No desktop environment required** (works on Raspberry Pi OS Lite)
+
+## How Display Mode Works
+
+The application automatically detects and uses the best available display method:
+
+| System Type | Display Method | Requirements |
+|-------------|----------------|--------------|
+| Raspberry Pi OS (with desktop) | X11 | None (uses existing X server) |
+| Raspberry Pi OS Lite | Framebuffer (fbcon) | User in `video` group |
+| Any Linux with X11 running | X11 | X11 running |
 
 ## Installation
 
@@ -38,13 +48,16 @@ chmod +x install.sh
 ./install.sh
 ```
 
-### 3. Add user to video group (required for framebuffer access)
+The installation script will:
+- Install system dependencies (SDL2, Python packages)
+- Create a Python virtual environment
+- Install required Python packages
+- Add your user to the `video` group (for display access)
+- Create wrapper scripts (`run.sh`, `sync.sh`)
 
-```bash
-sudo usermod -a -G video $USER
-```
+### 3. Log out and log back in
 
-**Important:** Log out and log back in (or reboot) for the group change to take effect.
+**Important:** After installation, log out and log back in for the `video` group membership to take effect.
 
 ### 4. Configure settings
 
@@ -59,7 +72,13 @@ Edit `settings.json` and add your Google Drive folder URL:
 
 The Google Drive folder must be set to "Anyone with the link can view".
 
-### 5. (Optional) Install systemd service
+### 5. Run the application
+
+```bash
+./run.sh
+```
+
+### 6. (Optional) Install systemd service
 
 For auto-start on boot:
 
@@ -102,6 +121,9 @@ sudo systemctl start gscreen
 # Stop service
 sudo systemctl stop gscreen
 
+# Restart service
+sudo systemctl restart gscreen
+
 # Check status
 sudo systemctl status gscreen
 
@@ -114,14 +136,13 @@ sudo journalctl -u gscreen -f
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `google_drive_url` | Google Drive folder URL (public link) | Required |
+| `display.hdmi_port` | HDMI port preference (0 or 1) | 1 |
 | `display.background_color` | Background color [R,G,B] | [0,0,0] |
 | `slideshow.interval_seconds` | Time between images | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
 | `sync.check_interval_minutes` | Sync check interval | 1 |
 | `sync.local_cache_dir` | Local photo cache directory | ./photos |
 | `supported_formats` | Image file extensions | jpg,jpeg,png,gif,bmp,webp |
-
-**Note:** `hdmi_port` setting is kept for compatibility but not used in framebuffer mode. The system uses `/dev/fb0` which corresponds to the active HDMI output.
 
 ## Display Setup on Raspberry Pi
 
@@ -149,14 +170,22 @@ hdmi_drive:0=1
 
 To prevent the screen from turning off:
 
+**For Raspberry Pi OS Lite (console):**
 ```bash
-# Disable screen blanking
-sudo nano /etc/lightdm/lightdm.conf
-# Add: xserver-command=X -s 0 -dpms
-
-# Or use console (for Lite version)
 sudo nano /etc/kbd/config
 # Set: BLANK_TIME=0, POWERDOWN_TIME=0
+```
+
+**For Raspberry Pi OS with desktop:**
+```bash
+# Disable screen blanking in lightdm
+sudo nano /etc/lightdm/lightdm.conf
+# Add under [SeatDefaults]: xserver-command=X -s 0 -dpms
+```
+
+**Alternative using systemd (works for both):**
+```bash
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 ```
 
 ## Troubleshooting
@@ -164,45 +193,56 @@ sudo nano /etc/kbd/config
 ### "No permission to access /dev/fb0"
 - Add user to video group: `sudo usermod -a -G video $USER`
 - Log out and log back in (or reboot)
+- Verify with: `groups` (should include `video`)
 
-### Black screen
+### Black screen on startup
 - Check if HDMI is connected: `ls /sys/class/drm/`
 - Verify framebuffer exists: `ls -l /dev/fb0`
-- Check permissions: `groups` (should include `video`)
+- Check display detection: `cat /sys/class/graphics/fb0/virtual_size`
 
 ### Google Drive sync not working
 - Verify folder is public (Anyone with link can view)
 - Try using `gdown` manually: `gdown --folder <url> -O photos`
+- Consider installing `rclone` for better reliability
 - Check internet connection
 
 ### Images not scaling correctly
-- Change `scale_mode` in settings.json
-- "fit" = letterbox/pillarbox (shows full image)
-- "fill" = crop to fill screen (no borders)
-- "stretch" = stretch to fill (may distort)
+- Change `scale_mode` in settings.json:
+  - "fit" = letterbox/pillarbox (shows full image with borders)
+  - "fill" = crop to fill screen (no borders)
+  - "stretch" = stretch to fill (may distort)
 
 ### High CPU usage
 - Increase `interval_seconds` in settings
 - Lower resolution images recommended (1920x1080 max)
 - Use optimized JPEG images
 
-## Keyboard Controls (when connected)
+### Display initialization errors
+- The app auto-detects X11 or framebuffer
+- If detection fails, try: `export DISPLAY=:0 && ./run.sh`
+- Check what's available: `ls /tmp/.X11-unix/` `ls /dev/fb*`
+
+## Keyboard Controls (when keyboard connected)
 
 - `ESC` or `Q` - Quit slideshow
 - `SPACE` - Skip to next image
 
-Note: Keyboard input may not work without a USB keyboard connected directly to the Pi.
+Note: Keyboard input requires a USB keyboard connected directly to the Pi.
 
 ## Technical Details
 
 This application uses:
-- **SDL with fbcon driver** for direct framebuffer access
+- **SDL 2** with auto-detected driver (x11 or fbcon)
 - **Pygame** for image rendering
 - **Pillow** for image processing
-- **gdown** for Google Drive downloads
+- **gdown** or manual requests for Google Drive downloads
 
-No X11 or desktop environment is required, making it ideal for:
+No specific desktop environment is required, making it ideal for:
 - Digital photo frames
 - Information displays
 - Kiosks
 - 24/7 signage displays
+
+## License
+
+MIT License - Feel free to use and modify for your projects.
