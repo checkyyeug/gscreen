@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-gScreen - Google Drive Photo Slideshow for Raspberry Pi 4
-Displays photos from Google Drive on HDMI output using framebuffer (no desktop required)
+gScreen - Google Drive Photo Slideshow for Raspberry Pi
+Displays photos from Google Drive on HDMI output
 
 Usage:
     python main.py [--sync-only] [--display-only]
 
-Requirements:
-    - Add user to video group: sudo usermod -a -G video $USER
-    - Reboot after adding to video group
+Display:
+    - Auto-detects X11 or framebuffer (no desktop required)
+    - For framebuffer: Add user to video group: sudo usermod -a -G video $USER
     - HDMI display must be connected
 """
 
@@ -25,9 +25,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Use SDL framebuffer driver (no X11/desktop required)
-os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon')
 
 
 def check_dependencies():

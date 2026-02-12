@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Slideshow Display Module
-Displays images on HDMI output using framebuffer (no X11/desktop required)
+Displays images on HDMI output
+Auto-detects best display method (framebuffer or X11)
 """
 
 import os
@@ -27,9 +28,6 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Use SDL framebuffer driver (no X11 required)
-os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon')
-
 
 class SlideshowDisplay:
     """Fullscreen slideshow display for HDMI output"""
@@ -48,6 +46,7 @@ class SlideshowDisplay:
         self.images: list[Path] = []
         self.screen = None
         self.screen_info = None
+        self.display_mode = None  # 'fbcon', 'x11', or 'directfb'
 
     def _load_settings(self, path: str) -> dict:
         """Load settings from JSON file"""
@@ -61,74 +60,201 @@ class SlideshowDisplay:
             logger.error(f"Invalid JSON in settings file: {e}")
             raise
 
-    def _check_framebuffer(self) -> bool:
-        """Check if framebuffer device is accessible"""
-        fb_device = '/dev/fb0'
-        if not os.path.exists(fb_device):
-            logger.error(f"Framebuffer device not found: {fb_device}")
-            logger.error("Make sure you're running on Raspberry Pi with HDMI connected")
-            return False
+    def _is_x11_running(self) -> bool:
+        """Check if X11 is running"""
+        # Check for X11 socket
+        if os.path.exists('/tmp/.X11-unix'):
+            return True
 
-        if not os.access(fb_device, os.R_OK | os.W_OK):
-            logger.error(f"No permission to access {fb_device}")
-            logger.error("Add user to video group: sudo usermod -a -G video $USER")
-            logger.error("Or run with sudo (not recommended)")
-            return False
+        # Check for X11 processes (lightdm, X, Xorg)
+        try:
+            import subprocess
+            # Check for any X server process
+            result = subprocess.run(['pgrep', '-x', 'X'], capture_output=True)
+            if result.returncode == 0:
+                return True
+            result = subprocess.run(['pgrep', '-x', 'Xorg'], capture_output=True)
+            if result.returncode == 0:
+                return True
+            # Check for lightdm
+            result = subprocess.run(['pgrep', 'lightdm'], capture_output=True)
+            if result.returncode == 0:
+                return True
+        except:
+            pass
 
-        return True
+        return False
 
-    def _setup_framebuffer(self):
-        """Setup framebuffer display environment"""
-        # Use fbcon driver for framebuffer access
-        os.environ['SDL_VIDEODRIVER'] = 'fbcon'
-        os.environ['SDL_FBDEV'] = '/dev/fb0'
-
-        # Disable mouse cursor (not needed in framebuffer mode)
-        os.environ['SDL_NOMOUSE'] = '1'
-
-        # Try to get framebuffer resolution directly
+    def _get_display_resolution(self) -> Tuple[int, int]:
+        """Try to get display resolution from various sources"""
+        # Try framebuffer sysfs first
         try:
             with open('/sys/class/graphics/fb0/virtual_size', 'r') as f:
                 resolution = f.read().strip()
                 width, height = map(int, resolution.split(','))
-                logger.info(f"Framebuffer resolution from sysfs: {width}x{height}")
+                logger.info(f"Framebuffer resolution: {width}x{height}")
                 return width, height
-        except Exception as e:
-            logger.warning(f"Could not read framebuffer resolution: {e}")
-            return None, None
+        except:
+            pass
+
+        # Try drm output
+        try:
+            for mode in ['modes', 'mode']:
+                for card in Path('/sys/class/drm').glob('card*- HDMI-*'):
+                    modes_file = card / mode
+                    if modes_file.exists():
+                        content = modes_file.read_text().strip()
+                        if content:
+                            # Parse mode like "1920x1080"
+                            for line in content.split('\n'):
+                                if 'x' in line:
+                                    w, h = line.split('x')[:2]
+                                    try:
+                                        return int(w), int(h)
+                                    except:
+                                        continue
+        except:
+            pass
+
+        return 1920, 1080  # Default fallback
+
+    def _init_display_framebuffer(self) -> bool:
+        """Try to initialize display using framebuffer (fbcon)"""
+        fb_device = '/dev/fb0'
+
+        if not os.path.exists(fb_device):
+            logger.debug(f"Framebuffer device not found: {fb_device}")
+            return False
+
+        if not os.access(fb_device, os.R_OK | os.W_OK):
+            logger.debug(f"No permission to access {fb_device}")
+            logger.debug("Add user to video group: sudo usermod -a -G video $USER")
+            return False
+
+        # Set up framebuffer environment
+        os.environ['SDL_VIDEODRIVER'] = 'fbcon'
+        os.environ['SDL_FBDEV'] = fb_device
+        os.environ['SDL_NOMOUSE'] = '1'
+
+        logger.info("Trying framebuffer (fbcon) driver...")
+        return True
+
+    def _init_display_x11(self) -> bool:
+        """Try to initialize display using X11"""
+        # Check what DISPLAY values are available
+        display_nums = []
+
+        # Check :0 and :1
+        for d in [0, 1]:
+            if os.path.exists(f'/tmp/.X11-unix/X{d}'):
+                display_nums.append(d)
+
+        if not display_nums:
+            # Use whatever is in DISPLAY env
+            display_env = os.environ.get('DISPLAY', '')
+            if display_env:
+                display_nums.append(int(display_env.split(':')[1].split('.')[0]))
+            else:
+                display_nums.append(0)
+
+        hdmi_port = self.display_settings.get('hdmi_port', 1)
+        display_num = hdmi_port if hdmi_port in display_nums else display_nums[0]
+
+        os.environ['SDL_VIDEODRIVER'] = 'x11'
+        os.environ['DISPLAY'] = f':{display_num}'
+
+        logger.info(f"Trying X11 driver on DISPLAY=:{display_num}...")
+        return True
 
     def init_display(self):
-        """Initialize pygame display using framebuffer (no X11 required)"""
+        """Initialize pygame display with auto-detection"""
         if pygame is None:
             raise ImportError("pygame is not installed. Install with: pip install pygame")
 
-        # Check framebuffer access
-        if not self._check_framebuffer():
-            raise RuntimeError("Cannot access framebuffer device")
+        # Get display resolution hint
+        width, height = self._get_display_resolution()
 
-        # Setup framebuffer environment
-        fb_width, fb_height = self._setup_framebuffer()
-        logger.info("Initializing display using framebuffer (/dev/fb0)")
+        # Try different display drivers in order
+        drivers_to_try = []
 
-        # Initialize pygame
-        pygame.init()
+        x11_running = self._is_x11_running()
+        if x11_running:
+            logger.info("X11 detected, will try X11 driver first")
+        else:
+            logger.info("No X11 detected, will try framebuffer driver first")
 
-        # Get display info
-        pygame.display.init()
-        self.screen_info = pygame.display.Info()
-        screen_width = self.screen_info.current_w
-        screen_height = self.screen_info.current_h
+        # If X11 is running, try it first, otherwise try framebuffer first
+        if x11_running:
+            drivers_to_try.append(('x11', self._init_display_x11))
+            drivers_to_try.append(('fbcon', self._init_display_framebuffer))
+        else:
+            drivers_to_try.append(('fbcon', self._init_display_framebuffer))
+            drivers_to_try.append(('x11', self._init_display_x11))
 
-        logger.info(f"Display resolution: {screen_width}x{screen_height}")
+        # Always try SDL's default auto-detection as last resort
+        def _init_sdl_default():
+            logger.info("Trying SDL default driver (auto-detect)...")
+            # Clear any SDL driver settings to let SDL auto-detect
+            for key in list(os.environ.keys()):
+                if key.startswith('SDL_'):
+                    del os.environ[key]
+            return True
+        drivers_to_try.append(('sdl-default', _init_sdl_default))
 
-        # Set display mode
-        flags = pygame.FULLSCREEN | pygame.NOFRAME
-        self.screen = pygame.display.set_mode((screen_width, screen_height), flags)
+        # Try each driver
+        for driver_name, init_func in drivers_to_try:
+            try:
+                # Clear any previous SDL config
+                for key in list(os.environ.keys()):
+                    if key.startswith('SDL_'):
+                        del os.environ[key]
+                if 'DISPLAY' in os.environ:
+                    del os.environ['DISPLAY']
 
-        # Hide cursor
-        pygame.mouse.set_visible(False)
+                # Initialize this driver
+                if not init_func():
+                    continue
 
-        logger.info("Display initialized successfully")
+                # Try to initialize pygame
+                pygame.init()
+                pygame.display.init()
+
+                # Get display info
+                self.screen_info = pygame.display.Info()
+                screen_width = self.screen_info.current_w
+                screen_height = self.screen_info.current_h
+
+                logger.info(f"Display resolution: {screen_width}x{screen_height}")
+
+                # Set display mode
+                flags = pygame.FULLSCREEN | pygame.NOFRAME
+                self.screen = pygame.display.set_mode((screen_width, screen_height), flags)
+
+                # Hide cursor
+                pygame.mouse.set_visible(False)
+
+                self.display_mode = driver_name
+                logger.info(f"Display initialized successfully using {driver_name} driver")
+                return
+
+            except Exception as e:
+                logger.warning(f"Failed to initialize {driver_name}: {e}")
+                # Clean up and try next driver
+                try:
+                    pygame.quit()
+                except:
+                    pass
+
+        # All drivers failed
+        tried = ", ".join(d[0] for d in drivers_to_try)
+        raise RuntimeError(
+            f"Failed to initialize display. Tried: {tried}\n"
+            "Troubleshooting:\n"
+            "  - Ensure HDMI display is connected\n"
+            "  - For framebuffer: sudo usermod -a -G video $USER (then re-login)\n"
+            "  - For X11: Make sure X11 is running: echo $DISPLAY\n"
+            "  - Try: export DISPLAY=:0 && python3 main.py"
+        )
 
     def load_images(self, cache_dir: str) -> list[Path]:
         """Load all images from cache directory"""
@@ -295,7 +421,7 @@ class SlideshowDisplay:
 
         while self.running:
             try:
-                # Handle events (limited support in framebuffer mode)
+                # Handle events
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
