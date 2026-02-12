@@ -59,6 +59,7 @@ chmod +x install.sh
 
 The installation script will:
 - Install system dependencies (SDL2, Python packages)
+- Install Noto CJK fonts for Chinese/Japanese/Korean text support
 - Create a Python virtual environment
 - Install required Python packages
 - Add your user to the `video` group (for display access)
@@ -324,6 +325,15 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 sudo apt install ffmpeg
 ```
 
+#### Font Support
+
+gScreen includes support for Chinese, Japanese, and Korean text display using Noto CJK fonts. The fonts are automatically installed by `install.sh`.
+
+If fonts are not displaying correctly, install them manually:
+```bash
+sudo apt install fonts-noto-cjk fonts-noto-cjk-extra
+```
+
 #### Sync Options (`sync`)
 
 | Option | Type | Default | Description |
@@ -536,8 +546,12 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
   2. `ntpdate` - Traditional NTP client
   3. Python `ntplib` - Pure Python NTP (fallback)
 
-### Chinese filenames not displaying correctly
-- The app uses UTF-8 encoding for all operations
+### Chinese text or filenames not displaying correctly
+- **Text display (schedule countdown, error messages)**: Install CJK fonts:
+  ```bash
+  sudo apt install fonts-noto-cjk fonts-noto-cjk-extra
+  ```
+- **File operations**: The app uses UTF-8 encoding for all operations
 - Ensure your terminal locale supports UTF-8: `locale charmap`
 - If needed, set locale: `sudo raspi-config` → Internationalisation Options → Locale
 - Select `en_US.UTF-8` or `zh_CN.UTF-8`

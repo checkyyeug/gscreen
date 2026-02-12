@@ -55,6 +55,8 @@ sudo apt install -y \
     libx264-dev \
     libatlas-base-dev \
     ffmpeg \
+    fonts-noto-cjk \
+    fonts-noto-cjk-extra \
     git
 
 # Create virtual environment

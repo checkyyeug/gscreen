@@ -299,11 +299,15 @@ class SlideshowDisplay:
         if self.font is None:
             pg = get_pygame()
             try:
-                # Try to use a system font
-                self.font = pg.font.SysFont('DejaVuSans', self.statusbar_font_size, bold=True)
+                # Try Noto Sans CJK for Chinese/Japanese/Korean support
+                self.font = pg.font.SysFont('Noto Sans CJK SC', self.statusbar_font_size, bold=True)
             except:
-                # Fallback to default font
-                self.font = pg.font.Font(None, self.statusbar_font_size)
+                try:
+                    # Fallback to DejaVuSans
+                    self.font = pg.font.SysFont('DejaVuSans', self.statusbar_font_size, bold=True)
+                except:
+                    # Fallback to default font
+                    self.font = pg.font.Font(None, self.statusbar_font_size)
 
     def _draw_statusbar(self, countdown: float = 0):
         """Draw status bar at configured positions based on orientation"""
@@ -1484,9 +1488,9 @@ class SlideshowDisplay:
 
                 # Clear screen with background color
                 if self.virtual_screen:
-                    self.virtual_screen.fill(self.background_color)
+                    self.virtual_screen.fill(self.bg_color)
                 else:
-                    self.screen.fill(self.background_color)
+                    self.screen.fill(self.bg_color)
 
                 # Draw messages centered
                 y_offset = screen_height // 2 - (len(messages) * 50) // 2
@@ -1500,8 +1504,8 @@ class SlideshowDisplay:
                     y_offset += 50
 
                 # Update display
-                if self.virtual_screen and self.physical_screen:
-                    pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.physical_screen)
+                if self.virtual_screen and self.screen:
+                    pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.screen)
                 pg.display.flip()
 
                 # Periodic sync check
@@ -1540,11 +1544,18 @@ class SlideshowDisplay:
 
         # Create fonts for the countdown
         try:
-            large_font = pg.font.SysFont('DejaVuSans', 48, bold=True)
-            medium_font = pg.font.SysFont('DejaVuSans', 28, bold=True)
+            # Try Noto Sans CJK for Chinese/Japanese/Korean support
+            large_font = pg.font.SysFont('Noto Sans CJK SC', 48, bold=True)
+            medium_font = pg.font.SysFont('Noto Sans CJK SC', 28, bold=True)
         except:
-            large_font = pg.font.Font(None, 64)
-            medium_font = pg.font.Font(None, 40)
+            try:
+                # Fallback to DejaVuSans
+                large_font = pg.font.SysFont('DejaVuSans', 48, bold=True)
+                medium_font = pg.font.SysFont('DejaVuSans', 28, bold=True)
+            except:
+                # Fallback to default font
+                large_font = pg.font.Font(None, 64)
+                medium_font = pg.font.Font(None, 40)
 
         # Screen dimensions
         screen_width = self.virt_width
@@ -1578,25 +1589,25 @@ class SlideshowDisplay:
 
                 # Clear screen with background color
                 if self.virtual_screen:
-                    self.virtual_screen.fill(self.background_color)
+                    self.virtual_screen.fill(self.bg_color)
                 else:
-                    self.screen.fill(self.background_color)
+                    self.screen.fill(self.bg_color)
 
                 # Draw messages
-                # Main message
-                main_msg = "不在 Schedule 内"
+                # Main message - show schedule time
+                main_msg = f"Schedule: {self.schedule_start} - {self.schedule_stop}"
                 main_surface = medium_font.render(main_msg, True, (255, 100, 100))
                 main_x = (screen_width - main_surface.get_width()) // 2
                 main_y = screen_height // 2 - 60
 
                 # Sub message
-                sub_msg = "准备 Sleep"
+                sub_msg = "Outside scheduled hours - Sleeping..."
                 sub_surface = medium_font.render(sub_msg, True, (200, 200, 200))
                 sub_x = (screen_width - sub_surface.get_width()) // 2
                 sub_y = screen_height // 2
 
                 # Countdown
-                countdown_msg = f"{remaining} 秒"
+                countdown_msg = f"Sleep in {remaining}s"
                 countdown_surface = large_font.render(countdown_msg, True, (255, 255, 255))
                 countdown_x = (screen_width - countdown_surface.get_width()) // 2
                 countdown_y = screen_height // 2 + 60
@@ -1611,9 +1622,12 @@ class SlideshowDisplay:
                     self.screen.blit(sub_surface, (sub_x, sub_y))
                     self.screen.blit(countdown_surface, (countdown_x, countdown_y))
 
-                # Update display
-                if self.virtual_screen and self.physical_screen:
-                    pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.physical_screen)
+                # Update display with rotation if needed
+                if self.rotation_mode == 'software' and self.rotation in [90, 180, 270]:
+                    self._apply_rotation_to_screen()
+                elif self.virtual_screen is not self.screen:
+                    # No software rotation, but virtual screen exists
+                    pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.screen)
                 pg.display.flip()
 
                 # Check if countdown is finished
@@ -1642,9 +1656,12 @@ class SlideshowDisplay:
 
         # Create fonts for error display
         try:
-            error_font = pg.font.SysFont('DejaVuSans', 32, bold=True)
+            error_font = pg.font.SysFont('Noto Sans CJK SC', 32, bold=True)
         except:
-            error_font = pg.font.Font(None, 40)
+            try:
+                error_font = pg.font.SysFont('DejaVuSans', 32, bold=True)
+            except:
+                error_font = pg.font.Font(None, 40)
 
         # Screen dimensions
         screen_width = self.virt_width
@@ -1660,9 +1677,12 @@ class SlideshowDisplay:
         else:
             self.screen.blit(text_surface, (text_x, text_y))
 
-        # Update display
-        if self.virtual_screen and self.physical_screen:
-            pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.physical_screen)
+        # Update display with rotation if needed
+        if self.rotation_mode == 'software' and self.rotation in [90, 180, 270]:
+            self._apply_rotation_to_screen()
+        elif self.virtual_screen is not self.screen:
+            # No software rotation, but virtual screen exists
+            pg.transform.scale(self.virtual_screen, (self.screen_width, self.screen_height), self.screen)
         pg.display.flip()
 
     def _clear_error_message(self):
