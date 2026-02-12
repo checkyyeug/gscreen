@@ -6,5 +6,8 @@ opencv-python>=4.8.0
 # HTTP requests for Google Drive
 requests>=2.31.0
 
+# Retry mechanism with exponential backoff
+tenacity>=8.0.0
+
 # Google Drive download tools (fallback)
 gdown>=5.0.0
