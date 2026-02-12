@@ -77,7 +77,8 @@ def create_default_settings(path: str):
             "hdmi_port": 1,
             "fullscreen": True,
             "borderless": True,
-            "background_color": [0, 0, 0]
+            "background_color": [0, 0, 0],
+            "hide_mouse": True
         },
         "slideshow": {
             "interval_seconds": 5,

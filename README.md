@@ -138,6 +138,7 @@ sudo journalctl -u gscreen -f
 | `google_drive_url` | Google Drive folder URL (public link) | Required |
 | `display.hdmi_port` | HDMI port preference (0 or 1) | 1 |
 | `display.background_color` | Background color [R,G,B] | [0,0,0] |
+| `display.hide_mouse` | Hide mouse cursor on display | true |
 | `slideshow.interval_seconds` | Time between images | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
 | `sync.check_interval_minutes` | Sync check interval | 1 |

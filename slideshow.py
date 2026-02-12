@@ -40,13 +40,14 @@ class SlideshowDisplay:
         self.interval = self.slideshow_settings['interval_seconds']
         self.scale_mode = self.slideshow_settings['scale_mode']
         self.bg_color = tuple(self.display_settings['background_color'])
+        self.hide_mouse = self.display_settings.get('hide_mouse', True)  # Default: True
 
         self.running = False
         self.current_image_index = 0
         self.images: list[Path] = []
         self.screen = None
         self.screen_info = None
-        self.display_mode = None  # 'fbcon', 'x11', or 'directfb'
+        self.display_mode = None  # 'fbcon', 'x11', or 'sdl-default'
 
     def _load_settings(self, path: str) -> dict:
         """Load settings from JSON file"""
@@ -134,10 +135,12 @@ class SlideshowDisplay:
         # Set up framebuffer environment
         os.environ['SDL_VIDEODRIVER'] = 'fbcon'
         os.environ['SDL_FBDEV'] = fb_device
-        # Disable mouse cursor
-        os.environ['SDL_NOMOUSE'] = '1'
 
-        logger.info("Trying framebuffer (fbcon) driver...")
+        # Disable mouse cursor if configured
+        if self.hide_mouse:
+            os.environ['SDL_NOMOUSE'] = '1'
+
+        logger.info(f"Trying framebuffer (fbcon) driver... (mouse: {'hidden' if self.hide_mouse else 'visible'})")
         return True
 
     def _init_display_x11(self) -> bool:
@@ -163,11 +166,13 @@ class SlideshowDisplay:
 
         os.environ['SDL_VIDEODRIVER'] = 'x11'
         os.environ['DISPLAY'] = f':{display_num}'
-        # Disable mouse cursor in X11
-        os.environ['SDL_NOMOUSE'] = '1'
-        os.environ['SDL_VIDEO_X11_DGAMOUSE'] = '0'
 
-        logger.info(f"Trying X11 driver on DISPLAY=:{display_num}...")
+        # Disable mouse cursor if configured
+        if self.hide_mouse:
+            os.environ['SDL_NOMOUSE'] = '1'
+            os.environ['SDL_VIDEO_X11_DGAMOUSE'] = '0'
+
+        logger.info(f"Trying X11 driver on DISPLAY=:{display_num}... (mouse: {'hidden' if self.hide_mouse else 'visible'})")
         return True
 
     def init_display(self):
@@ -234,8 +239,10 @@ class SlideshowDisplay:
                 flags = pygame.FULLSCREEN | pygame.NOFRAME
                 self.screen = pygame.display.set_mode((screen_width, screen_height), flags)
 
-                # Hide cursor
-                pygame.mouse.set_visible(False)
+                # Hide cursor based on setting
+                pygame.mouse.set_visible(not self.hide_mouse)
+                if self.hide_mouse:
+                    logger.info("Mouse cursor hidden")
 
                 self.display_mode = driver_name
                 logger.info(f"Display initialized successfully using {driver_name} driver")
@@ -425,8 +432,9 @@ class SlideshowDisplay:
 
         while self.running:
             try:
-                # Ensure mouse cursor is hidden (especially for X11)
-                pygame.mouse.set_visible(False)
+                # Ensure mouse cursor state matches setting
+                if self.hide_mouse:
+                    pygame.mouse.set_visible(False)
 
                 # Handle events
                 for event in pygame.event.get():
