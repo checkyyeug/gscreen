@@ -12,6 +12,7 @@ import requests
 from pathlib import Path
 from typing import Set, Dict
 import time
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -130,12 +131,157 @@ class GoogleDriveSync:
     def sync(self) -> bool:
         """
         Perform sync operation with Google Drive.
-        - Downloads new/modified files
+        - Compares modification times before downloading
+        - Only downloads new/changed files
         - Deletes local files that no longer exist on Drive
         Returns True if any changes were made.
         """
         logger.info("Starting sync...")
 
+        # Try rclone first for efficient sync (can list files with mod time without downloading)
+        rclone_result = self._sync_with_rclone_check_only()
+
+        if rclone_result:
+            return rclone_result
+
+        # Fallback to gdown method
+        return self._sync_with_gdown()
+
+    def _sync_with_rclone_check_only(self) -> bool:
+        """
+        Use rclone to check files and only download changed ones.
+        Returns True if rclone is available and sync was attempted.
+        Returns False if rclone is not available.
+        """
+        import subprocess
+
+        try:
+            # First, list files on Google Drive with their mod times
+            list_cmd = [
+                'rclone', 'lsf',
+                f'remote:{self._drive_id}',
+                '--format', 'tp',  # time, path
+                '-R'
+            ]
+
+            result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode != 0:
+                return False
+
+            # Parse rclone output to get Drive files with mod times
+            drive_files = {}  # filename -> mod_time
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split(None, 1)  # Split on first whitespace (time and path)
+                if len(parts) != 2:
+                    continue
+                mod_time_str, file_path = parts
+                file_path = file_path.strip('"')  # rclone outputs paths in quotes
+
+                # Get just the filename
+                filename = Path(file_path).name
+                if not self._is_supported_image(filename):
+                    continue
+
+                # Parse mod time (rclone uses RFC3339 format like "2024-02-12T12:34:56.123456789Z")
+                try:
+                    mod_time = datetime.fromisoformat(mod_time_str.replace('Z', '+00:00'))
+                    drive_files[filename] = mod_time
+                except Exception as e:
+                    logger.debug(f"Could not parse mod time for {filename}: {e}")
+                    drive_files[filename] = None
+
+            # Get local files with their mod times
+            local_files = {}  # filename -> mod_time
+            for file in self.cache_dir.iterdir():
+                if file.is_file() and self._is_supported_image(file.name):
+                    mod_time = datetime.fromtimestamp(file.stat().st_mtime)
+                    local_files[file.name] = mod_time
+
+            # Determine which files need action
+            drive_filenames = set(drive_files.keys())
+            local_filenames = set(local_files.keys())
+
+            files_to_download = set()
+            files_to_delete = local_filenames - drive_filenames
+
+            # Check which files need to be downloaded
+            for filename in drive_filenames:
+                if filename not in local_filenames:
+                    files_to_download.add(filename)
+                else:
+                    # File exists locally, check if it needs updating
+                    drive_mod = drive_files[filename]
+                    local_mod = local_files[filename]
+                    if drive_mod and local_mod and drive_mod > local_mod:
+                        files_to_download.add(filename)
+
+            # Delete files that no longer exist on Drive
+            deleted_count = 0
+            for filename in files_to_delete:
+                try:
+                    file_path = self.cache_dir / filename
+                    if file_path.exists():
+                        file_path.unlink()
+                        logger.info(f"Deleted: {filename} (removed from Drive)")
+                        deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to delete {filename}: {e}")
+
+            # Download only changed files
+            added_count = 0
+            updated_count = 0
+
+            if files_to_download:
+                for filename in files_to_download:
+                    is_new = filename not in local_filenames
+                    try:
+                        download_cmd = [
+                            'rclone', 'copy',
+                            f'remote:{self._drive_id}/{filename}' if '/' not in filename else f'remote:{self._drive_id}',
+                            str(self.cache_dir),
+                            '--include', f'/{filename}',
+                            '--no-modtime',
+                            '--progress'
+                        ]
+
+                        # For folders, we need to handle differently
+                        dl_result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=300)
+
+                        if dl_result.returncode == 0:
+                            if is_new:
+                                added_count += 1
+                                logger.info(f"Added: {filename}")
+                            else:
+                                updated_count += 1
+                                logger.info(f"Updated: {filename}")
+                        else:
+                            logger.warning(f"Failed to download {filename}: {dl_result.stderr}")
+                    except Exception as e:
+                        logger.warning(f"Error downloading {filename}: {e}")
+
+            total_changes = added_count + updated_count + deleted_count
+            if total_changes > 0:
+                logger.info(f"Sync completed: +{added_count} added, ~{updated_count} updated, -{deleted_count} deleted")
+            else:
+                logger.info("Sync completed: No changes")
+
+            return True
+
+        except FileNotFoundError:
+            # rclone not installed, return False to use gdown fallback
+            return False
+        except Exception as e:
+            logger.warning(f"rclone sync failed: {e}, falling back to gdown")
+            return False
+
+    def _sync_with_gdown(self) -> bool:
+        """
+        Fallback method using gdown.
+        Downloads all files and compares afterwards.
+        """
         import subprocess
         import shutil
 
@@ -160,8 +306,7 @@ class GoogleDriveSync:
 
             if result.returncode != 0:
                 logger.warning(f"gdown returned: {result.stderr}")
-                # Try rclone as fallback
-                return self._sync_with_rclone()
+                return False
 
             # Get list of files before sync (from media directory)
             local_files_before = set()
@@ -256,7 +401,7 @@ class GoogleDriveSync:
             logger.error(f"Sync error: {e}")
             # Clean up temp directory on error
             try:
-                if temp_dir.exists():
+                if 'temp_dir' in locals() and temp_dir.exists():
                     shutil.rmtree(temp_dir)
             except:
                 pass
