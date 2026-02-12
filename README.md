@@ -139,11 +139,30 @@ sudo journalctl -u gscreen -f
 | `display.hdmi_port` | HDMI port preference (0 or 1) | 1 |
 | `display.background_color` | Background color [R,G,B] | [0,0,0] |
 | `display.hide_mouse` | Hide mouse cursor on display | true |
+| `display.show_statusbar` | Show status bar | true |
+| `display.statusbar_position` | Status bar position: "top" or "bottom" | "bottom" |
 | `slideshow.interval_seconds` | Time between images | 5 |
 | `slideshow.scale_mode` | "fit", "fill", or "stretch" | "fit" |
 | `sync.check_interval_minutes` | Sync check interval | 1 |
 | `sync.local_cache_dir` | Local photo cache directory | ./photos |
 | `supported_formats` | Image file extensions | jpg,jpeg,png,gif,bmp,webp |
+
+### Status Bar Information
+
+**Left side:**
+- File name
+- Modification date
+- File size
+- File format (JPG, PNG, etc.)
+- Image dimensions
+
+**Right side:**
+- Screen resolution
+- Current time
+- WiFi signal strength (dBm)
+- Image counter (current/total)
+- Countdown to next image
+- Last Google Drive sync time
 
 ## Display Setup on Raspberry Pi
 
