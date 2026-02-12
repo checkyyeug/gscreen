@@ -186,9 +186,8 @@ class GoogleDriveSync:
         try:
             # Use timedatectl to sync time with NTP
             logger.info("[TimeSync] Using timedatectl for NTP sync...")
-            cmd = ['timedatectl', 'set-ntp', 'true']
-            if not is_root:
-                cmd = ['sudo'] + cmd
+            # Always use sudo with full path to avoid polkit prompt in service mode
+            cmd = ['sudo', '/usr/bin/timedatectl', 'set-ntp', 'true']
 
             result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
@@ -231,9 +230,8 @@ class GoogleDriveSync:
             tz = common_tz.get(self.timezone_offset, tz_map.get(self.timezone_offset, 'Etc/UTC'))
 
             logger.info(f"[TimeSync] Setting timezone to {tz} (UTC+{self.timezone_offset})...")
-            cmd = ['timedatectl', 'set-timezone', tz]
-            if not is_root:
-                cmd = ['sudo'] + cmd
+            # Always use sudo with full path to avoid polkit prompt in service mode
+            cmd = ['sudo', '/usr/bin/timedatectl', 'set-timezone', tz]
 
             result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
