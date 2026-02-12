@@ -1,6 +1,7 @@
 # Display and graphics
-pygame>=2.5.0
+pygame-ce>=2.5.0
 Pillow>=10.0.0
+opencv-python>=4.8.0
 
 # HTTP requests for Google Drive
 requests>=2.31.0

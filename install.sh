@@ -46,6 +46,14 @@ sudo apt install -y \
     libpng-dev \
     libfreetype6-dev \
     libportmidi-dev \
+    libgtk-3-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
+    libatlas-base-dev \
     git
 
 # Create virtual environment

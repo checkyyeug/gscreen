@@ -31,10 +31,14 @@ def check_dependencies():
     """Check if required dependencies are installed"""
     missing = []
 
+    # Check pygame-ce using pip list (don't import pygame to avoid early SDL init)
+    import subprocess
     try:
-        import pygame
-    except ImportError:
-        missing.append('pygame')
+        result = subprocess.run(['pip', 'list'], capture_output=True, text=True, timeout=5)
+        if 'pygame-ce' not in result.stdout.lower():
+            missing.append('pygame-ce')
+    except Exception:
+        missing.append('pygame-ce')
 
     try:
         from PIL import Image

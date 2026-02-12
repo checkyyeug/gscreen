@@ -18,15 +18,28 @@ from pathlib import Path
 from typing import Optional, Tuple, List
 import random
 
-try:
-    import pygame
-except ImportError:
-    pygame = None
+# Don't import pygame yet - we need to set SDL_VIDEODRIVER first
+pygame = None
+def get_pygame():
+    global pygame
+    if pygame is not None:
+        return pygame
+    try:
+        import pygame as pg
+        pygame = pg
+        return pygame
+    except ImportError:
+        return None
 
 try:
     from PIL import Image
 except ImportError:
     Image = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -59,6 +72,8 @@ class SlideshowDisplay:
         self.images: list[Path] = []
         self.screen = None
         self.screen_info = None
+        self.screen_width = 0
+        self.screen_height = 0
         self.display_mode = None  # 'fbcon', 'x11', or 'sdl-default'
         self.font = None
         self.last_sync_time = None
@@ -81,31 +96,31 @@ class SlideshowDisplay:
 
     def _get_wifi_signal(self) -> str:
         """Get WiFi signal strength in dBm"""
+        # Try iwconfig first (more reliable)
         try:
-            # Try to get WiFi signal from /proc/net/wireless
-            for interface in ['wlan0', 'wlan1', 'wlp1s0', 'wlo1']:
-                path = f'/proc/net/wireless'
-                if os.path.exists(path):
-                    with open(path, 'r') as f:
-                        lines = f.readlines()
-                        if len(lines) >= 3:
-                            # Parse signal quality (3rd line, 3rd value)
-                            parts = lines[2].split()
-                            if len(parts) >= 3:
-                                signal = int(parts[2])
-                                # Convert to dBm (approximately)
-                                dbm = signal - 100
-                                return f"{dbm} dBm"
-
-            # Alternative: try iwconfig
             result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=1)
             if 'Signal level' in result.stdout:
-                import re
                 match = re.search(r'Signal level=(-?\d+) dBm', result.stdout)
                 if match:
                     return f"{match.group(1)} dBm"
         except:
             pass
+
+        # Fallback: try /proc/net/wireless
+        try:
+            if os.path.exists('/proc/net/wireless'):
+                with open('/proc/net/wireless', 'r') as f:
+                    lines = f.readlines()
+                    if len(lines) >= 3:
+                        # Parse signal level (4th column on data line)
+                        parts = lines[2].split()
+                        if len(parts) >= 4:
+                            # Signal is in dBm already (negative value with decimal)
+                            signal = int(float(parts[3]))
+                            return f"{signal} dBm"
+        except:
+            pass
+
         return "N/A"
 
     def _get_file_info(self, image_path: Path) -> dict:
@@ -142,25 +157,76 @@ class SlideshowDisplay:
 
         return info
 
+    def _is_video(self, filepath: Path) -> bool:
+        """Check if file is a video based on extension"""
+        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
+        return filepath.suffix.lower() in video_extensions
+
+    def _get_video_info(self, video_path: Path) -> dict:
+        """Get video file information"""
+        info = {
+            'name': video_path.name,
+            'size': '',
+            'modified': '',
+            'format': video_path.suffix.upper(),
+            'dimensions': '',
+            'duration': ''
+        }
+
+        try:
+            # File size
+            size_bytes = video_path.stat().st_size
+            if size_bytes < 1024:
+                info['size'] = f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                info['size'] = f"{size_bytes / 1024:.1f} KB"
+            else:
+                info['size'] = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+            # Modification date
+            mtime = video_path.stat().st_mtime
+            mod_time = datetime.datetime.fromtimestamp(mtime)
+            info['modified'] = mod_time.strftime("%Y-%m-%d %H:%M")
+
+            # Video info using cv2
+            if cv2 is not None:
+                cap = cv2.VideoCapture(str(video_path))
+                if cap.isOpened():
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    duration = frame_count / fps if fps > 0 else 0
+
+                    info['dimensions'] = f"{width}x{height}"
+                    info['duration'] = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                    cap.release()
+        except Exception as e:
+            logger.debug(f"Error getting video info: {e}")
+
+        return info
+
     def _init_font(self):
         """Initialize font for status bar"""
         if self.font is None:
+            pg = get_pygame()
             try:
                 # Try to use a system font
-                self.font = pygame.font.SysFont('DejaVuSans', self.statusbar_font_size, bold=True)
+                self.font = pg.font.SysFont('DejaVuSans', self.statusbar_font_size, bold=True)
             except:
                 # Fallback to default font
-                self.font = pygame.font.Font(None, self.statusbar_font_size)
+                self.font = pg.font.Font(None, self.statusbar_font_size)
 
     def _draw_statusbar(self, countdown: float = 0):
         """Draw status bar at top or bottom of screen"""
         if not self.show_statusbar or self.screen is None:
             return
 
+        pg = get_pygame()
         self._init_font()
 
-        screen_width = self.screen_info.current_w
-        screen_height = self.screen_info.current_h
+        screen_width = self.screen_width
+        screen_height = self.screen_height
 
         # Determine status bar position based on setting
         if self.statusbar_position == 'top':
@@ -168,10 +234,10 @@ class SlideshowDisplay:
         else:  # 'bottom' or default
             statusbar_y = screen_height - self.statusbar_height
 
-        statusbar_rect = pygame.Rect(0, statusbar_y, screen_width, self.statusbar_height)
+        statusbar_rect = pg.Rect(0, statusbar_y, screen_width, self.statusbar_height)
 
         # Draw status bar background
-        pygame.draw.rect(self.screen, self.statusbar_bg_color, statusbar_rect)
+        pg.draw.rect(self.screen, self.statusbar_bg_color, statusbar_rect)
 
         # Left side info (file info)
         left_texts = []
@@ -329,8 +395,9 @@ class SlideshowDisplay:
 
     def init_display(self):
         """Initialize pygame display with auto-detection"""
-        if pygame is None:
-            raise ImportError("pygame is not installed. Install with: pip install pygame")
+        pg = get_pygame()
+        if pg is None:
+            raise ImportError("pygame-ce is not installed. Install with: pip install pygame-ce")
 
         # Get display resolution hint
         width, height = self._get_display_resolution()
@@ -342,15 +409,23 @@ class SlideshowDisplay:
         if x11_running:
             logger.info("X11 detected, will try X11 driver first")
         else:
-            logger.info("No X11 detected, will try framebuffer driver first")
+            logger.info("No X11 detected, will try KMSDRM driver first")
 
-        # If X11 is running, try it first, otherwise try framebuffer first
-        if x11_running:
-            drivers_to_try.append(('x11', self._init_display_x11))
+        # Priority: KMSDRM (modern framebuffer) > fbcon > x11
+        def _init_kmsdrm():
+            logger.info("Trying KMSDRM driver... (mouse: hidden)")
+            os.environ['SDL_VIDEODRIVER'] = 'kmsdrm'
+            os.environ['SDL_NOMOUSE'] = '1'
+            return True
+
+        if not x11_running:
+            drivers_to_try.append(('kmsdrm', _init_kmsdrm))
             drivers_to_try.append(('fbcon', self._init_display_framebuffer))
+            drivers_to_try.append(('x11', self._init_display_x11))
         else:
-            drivers_to_try.append(('fbcon', self._init_display_framebuffer))
             drivers_to_try.append(('x11', self._init_display_x11))
+            drivers_to_try.append(('kmsdrm', _init_kmsdrm))
+            drivers_to_try.append(('fbcon', self._init_display_framebuffer))
 
         # Always try SDL's default auto-detection as last resort
         def _init_sdl_default():
@@ -377,22 +452,27 @@ class SlideshowDisplay:
                     continue
 
                 # Try to initialize pygame
-                pygame.init()
-                pygame.display.init()
+                pg.init()
+                pg.display.init()
 
-                # Get display info
-                self.screen_info = pygame.display.Info()
-                screen_width = self.screen_info.current_w
-                screen_height = self.screen_info.current_h
+                # Use detected resolution for proper display sizing
+                screen_width = width
+                screen_height = height
+
+                # Get display info for other purposes (but use detected resolution)
+                self.screen_info = pg.display.Info()
+                # Store detected resolution for consistent access
+                self.screen_width = screen_width
+                self.screen_height = screen_height
 
                 logger.info(f"Display resolution: {screen_width}x{screen_height}")
 
-                # Set display mode (account for status bar)
-                flags = pygame.FULLSCREEN | pygame.NOFRAME
-                self.screen = pygame.display.set_mode((screen_width, screen_height), flags)
+                # Set display mode with double buffering for smooth rendering
+                flags = pg.FULLSCREEN | pg.DOUBLEBUF | pg.HWSURFACE | pg.NOFRAME
+                self.screen = pg.display.set_mode((screen_width, screen_height), flags)
 
                 # Hide cursor based on setting
-                pygame.mouse.set_visible(not self.hide_mouse)
+                pg.mouse.set_visible(not self.hide_mouse)
                 if self.hide_mouse:
                     logger.info("Mouse cursor hidden")
 
@@ -404,7 +484,7 @@ class SlideshowDisplay:
                 logger.warning(f"Failed to initialize {driver_name}: {e}")
                 # Clean up and try next driver
                 try:
-                    pygame.quit()
+                    pg.quit()
                 except:
                     pass
 
@@ -414,9 +494,8 @@ class SlideshowDisplay:
             f"Failed to initialize display. Tried: {tried}\n"
             "Troubleshooting:\n"
             "  - Ensure HDMI display is connected\n"
-            "  - For framebuffer: sudo usermod -a -G video $USER (then re-login)\n"
-            "  - For X11: Make sure X11 is running: echo $DISPLAY\n"
-            "  - Try: export DISPLAY=:0 && python3 main.py"
+            "  - Install pygame-ce: pip install pygame-ce\n"
+            "  - Make sure you're in the video group: groups $USER"
         )
 
     def load_images(self, cache_dir: str) -> list[Path]:
@@ -506,6 +585,7 @@ class SlideshowDisplay:
 
     def display_image(self, image_path: Path) -> bool:
         """Load and display an image"""
+        pg = get_pygame()
         try:
             # Get file info for status bar
             self.current_image_path = image_path
@@ -515,13 +595,13 @@ class SlideshowDisplay:
             if self.show_statusbar:
                 if self.statusbar_position == 'top':
                     image_display_y = self.statusbar_height
-                    image_display_height = self.screen_info.current_h - self.statusbar_height
+                    image_display_height = self.screen_height - self.statusbar_height
                 else:  # 'bottom' or default
                     image_display_y = 0
-                    image_display_height = self.screen_info.current_h - self.statusbar_height
+                    image_display_height = self.screen_height - self.statusbar_height
             else:
                 image_display_y = 0
-                image_display_height = self.screen_info.current_h
+                image_display_height = self.screen_height
 
             # Use PIL for better image loading
             if Image is not None:
@@ -532,8 +612,8 @@ class SlideshowDisplay:
                     pil_image = pil_image.convert('RGB')
 
                 img_width, img_height = pil_image.size
-                screen_width = self.screen_info.current_w
-                screen_height = self.screen_info.current_h
+                screen_width = self.screen_width
+                screen_height = self.screen_height
 
                 # Calculate dimensions based on scale mode
                 if self.scale_mode == 'fit':
@@ -557,16 +637,16 @@ class SlideshowDisplay:
                     pil_image = pil_image.resize((screen_width, image_display_height), Image.Resampling.LANCZOS)
 
                 # Convert to pygame surface
-                img_surface = pygame.image.fromstring(
+                img_surface = pg.image.fromstring(
                     pil_image.tobytes(),
                     pil_image.size,
                     pil_image.mode
                 )
             else:
                 # Fallback to pygame only
-                img_surface = pygame.image.load(str(image_path))
-                screen_width = self.screen_info.current_w
-                img_surface = pygame.transform.scale(
+                img_surface = pg.image.load(str(image_path))
+                screen_width = self.screen_width
+                img_surface = pg.transform.scale(
                     img_surface,
                     (screen_width, image_display_height)
                 )
@@ -578,7 +658,7 @@ class SlideshowDisplay:
             # Draw status bar
             self._draw_statusbar()
 
-            pygame.display.flip()
+            pg.display.flip()
 
             logger.debug(f"Displayed: {image_path.name}")
             return True
@@ -587,6 +667,214 @@ class SlideshowDisplay:
             logger.error(f"Error displaying {image_path}: {e}")
             return False
 
+    def display_video(self, video_path: Path) -> bool:
+        """Load and display a video file using OpenCV"""
+        pg = get_pygame()
+        if cv2 is None:
+            logger.error("OpenCV (cv2) is not installed. Install with: pip install opencv-python")
+            return False
+
+        try:
+            # Get video info for status bar
+            self.current_image_path = video_path
+            self.current_image_info = self._get_video_info(video_path)
+
+            # Determine video display area based on status bar position
+            if self.show_statusbar:
+                if self.statusbar_position == 'top':
+                    video_display_y = self.statusbar_height
+                    video_display_height = self.screen_height - self.statusbar_height
+                else:  # 'bottom' or default
+                    video_display_y = 0
+                    video_display_height = self.screen_height - self.statusbar_height
+            else:
+                video_display_y = 0
+                video_display_height = self.screen_height
+
+            # Open video file
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                logger.error(f"Failed to open video: {video_path}")
+                return False
+
+            # Get video properties
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            duration = frame_count / fps if fps > 0 else 0
+
+            # Calculate display dimensions based on scale mode
+            video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+            if self.scale_mode == 'fit':
+                x, y, display_width, display_height = self.calculate_fit_size(
+                    video_width, video_height, self.screen_width, video_display_height
+                )
+                y += video_display_y  # Adjust for status bar offset
+            elif self.scale_mode == 'fill':
+                # For fill mode in video, we'll use crop calculation
+                crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
+                    video_width, video_height, self.screen_width, video_display_height
+                )
+                display_width = self.screen_width
+                display_height = video_display_height
+                x = 0
+                y = video_display_y
+            else:  # stretch
+                display_width = self.screen_width
+                display_height = video_display_height
+                x = 0
+                y = video_display_y
+                crop_x, crop_y, crop_w, crop_h = 0, 0, video_width, video_height
+
+            frame_delay = int(1000 / fps) if fps > 0 else 33  # ms between frames
+
+            logger.info(f"Playing video: {video_path.name} ({video_width}x{video_height} @ {fps:.1f}fps)")
+
+            start_time = time.time()
+            frame_start_time = start_time
+            current_frame_idx = 0
+
+            while self.running:
+                # Handle events
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
+                        cap.release()
+                        self.running = False
+                        return False
+                    elif event.type == pg.KEYDOWN:
+                        if event.key == pg.K_ESCAPE:
+                            cap.release()
+                            self.running = False
+                            return False
+                        elif event.key == pg.K_SPACE:
+                            cap.release()
+                            return True  # Skip to next
+                        elif event.key == pg.K_q:
+                            cap.release()
+                            self.running = False
+                            return False
+
+                # Read frame
+                ret, frame = cap.read()
+                if not ret:
+                    # End of video
+                    break
+
+                # Crop if in fill mode
+                if self.scale_mode == 'fill':
+                    frame = frame[crop_y:crop_y + crop_h, crop_x:crop_x + crop_w]
+
+                # Resize frame
+                if frame.shape[1] != display_width or frame.shape[0] != display_height:
+                    frame = cv2.resize(frame, (display_width, display_height),
+                                       interpolation=cv2.INTER_LINEAR)
+
+                # Convert BGR to RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                # Create pygame surface
+                frame_surface = pg.image.frombuffer(
+                    frame_rgb.tobytes(),
+                    (display_width, display_height),
+                    'RGB'
+                )
+
+                # Display frame
+                self.screen.fill(self.bg_color)
+                self.screen.blit(frame_surface, (x, y))
+
+                # Update status bar with video progress
+                current_time = time.time() - start_time
+                remaining = max(0, duration - current_time)
+                self._draw_statusbar_video(current_time, remaining, duration, current_frame_idx, frame_count)
+                pg.display.flip()
+
+                current_frame_idx += 1
+
+                # Maintain frame rate timing
+                elapsed = (time.time() - frame_start_time) * 1000
+                wait_time = max(1, frame_delay - int(elapsed))
+                time.sleep(wait_time / 1000.0)
+                frame_start_time = time.time()
+
+            cap.release()
+            logger.info(f"Video playback finished: {video_path.name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error displaying video {video_path}: {e}")
+            return False
+
+    def _draw_statusbar_video(self, current_time: float, remaining: float, duration: float,
+                              frame_idx: int, total_frames: int):
+        """Draw status bar with video playback info"""
+        pg = get_pygame()
+        if not self.show_statusbar or self.screen is None:
+            return
+
+        self._init_font()
+
+        screen_width = self.screen_width
+        screen_height = self.screen_height
+
+        # Determine status bar position based on setting
+        if self.statusbar_position == 'top':
+            statusbar_y = 0
+        else:  # 'bottom' or default
+            statusbar_y = screen_height - self.statusbar_height
+
+        statusbar_rect = pg.Rect(0, statusbar_y, screen_width, self.statusbar_height)
+
+        # Draw status bar background
+        pg.draw.rect(self.screen, self.statusbar_bg_color, statusbar_rect)
+
+        # Format time as MM:SS
+        def format_time(t):
+            mins = int(t // 60)
+            secs = int(t % 60)
+            return f"{mins}:{secs:02d}"
+
+        # Left side info (file info)
+        left_texts = []
+        if self.current_image_info:
+            left_texts = [
+                f"VIDEO: {self.current_image_info.get('name', '')}",
+                f"{self.current_image_info.get('dimensions', '')}",
+            ]
+
+        # Video progress info
+        progress_text = f"{format_time(current_time)} / {format_time(duration)}"
+        if duration > 0:
+            progress_pct = (current_time / duration) * 100
+            progress_text += f" ({progress_pct:.0f}%)"
+
+        # Right side info
+        right_texts = [
+            f"Res: {screen_width}x{screen_height}",
+            f"Time: {datetime.datetime.now().strftime('%H:%M:%S')}",
+            f"WiFi: {self._get_wifi_signal()}",
+            f"Media: {self.current_image_index + 1}/{len(self.images)}",
+            progress_text,
+        ]
+
+        # Text vertical offset (center in status bar)
+        y_offset = statusbar_y + 2
+
+        # Render left text
+        x_offset = 10
+        for text in left_texts:
+            surface = self.font.render(text, True, self.statusbar_text_color)
+            self.screen.blit(surface, (x_offset, y_offset))
+            x_offset += surface.get_width() + 15
+
+        # Render right text (from right to left)
+        x_offset = screen_width - 10
+        for text in reversed(right_texts):
+            surface = self.font.render(text, True, self.statusbar_text_color)
+            x_offset -= surface.get_width() + 15
+            self.screen.blit(surface, (x_offset, y_offset))
+
     def _signal_handler(self, signum, frame):
         """Handle signals for clean shutdown"""
         logger.info("Received signal, shutting down...")
@@ -594,6 +882,7 @@ class SlideshowDisplay:
 
     def run(self, cache_dir: str):
         """Main slideshow loop"""
+        pg = get_pygame()
         # Setup signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -608,34 +897,47 @@ class SlideshowDisplay:
             return
 
         self.running = True
-        last_change = time.time()
+        # Set last_change to 0 to trigger immediate display of first media
+        last_change = 0
         last_sync = time.time()
         last_statusbar_update = time.time()
 
-        logger.info(f"Starting slideshow with {len(self.images)} images")
+        # Count videos vs images
+        video_count = sum(1 for img in self.images if self._is_video(img))
+        image_count = len(self.images) - video_count
+        logger.info(f"Starting slideshow with {len(self.images)} media files ({image_count} images, {video_count} videos)")
 
         # Import sync module for periodic updates
         from gdrive_sync import GoogleDriveSync
         sync = GoogleDriveSync()
 
+        # Display first media immediately
+        if self.images:
+            media_path = self.images[self.current_image_index]
+            if self._is_video(media_path):
+                self.display_video(media_path)
+            else:
+                self.display_image(media_path)
+            last_change = time.time()
+
         while self.running:
             try:
                 # Ensure mouse cursor state matches setting
                 if self.hide_mouse:
-                    pygame.mouse.set_visible(False)
+                    pg.mouse.set_visible(False)
 
                 # Handle events
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
                         self.running = False
-                    elif event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE:
+                    elif event.type == pg.KEYDOWN:
+                        if event.key == pg.K_ESCAPE:
                             logger.info("ESC pressed, exiting...")
                             self.running = False
-                        elif event.key == pygame.K_SPACE:
+                        elif event.key == pg.K_SPACE:
                             # Skip to next image
                             last_change = 0
-                        elif event.key == pygame.K_q:
+                        elif event.key == pg.K_q:
                             logger.info("Q pressed, exiting...")
                             self.running = False
 
@@ -646,17 +948,23 @@ class SlideshowDisplay:
                     if self.show_statusbar and self.screen is not None:
                         countdown = self.interval - (current_time - last_change)
                         self._draw_statusbar(countdown)
-                        pygame.display.flip()
+                        pg.display.flip()
                     last_statusbar_update = current_time
 
-                # Check if it's time to change image
+                # Check if it's time to change image/video
                 if current_time - last_change >= self.interval:
                     if self.images:
-                        # Display next image
-                        image_path = self.images[self.current_image_index]
-                        self.display_image(image_path)
+                        # Display next media
+                        media_path = self.images[self.current_image_index]
 
-                        # Move to next image
+                        if self._is_video(media_path):
+                            # Play the full video
+                            self.display_video(media_path)
+                        else:
+                            # Display image
+                            self.display_image(media_path)
+
+                        # Move to next media
                         self.current_image_index = (self.current_image_index + 1) % len(self.images)
                         last_change = current_time
                         last_statusbar_update = current_time  # Reset statusbar timer
@@ -684,7 +992,7 @@ class SlideshowDisplay:
                 time.sleep(1)
 
         # Cleanup
-        pygame.quit()
+        pg.quit()
         logger.info("Slideshow ended")
 
 
