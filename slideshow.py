@@ -344,7 +344,7 @@ class SlideshowDisplay:
                     # Fallback to default font
                     self.font = pg.font.Font(None, self.statusbar_font_size)
 
-    def _draw_statusbar(self, countdown: float = 0):
+    def _draw_statusbar(self, countdown: float):
         """Draw status bar at configured positions based on orientation"""
         if self.virtual_screen is None:
             return
@@ -405,7 +405,7 @@ class SlideshowDisplay:
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
         countdown = 0  # Use different name to avoid conflict with builtin
-        countdown_text = f"{countdown:.0f}s"
+        countdown_text = f"{countdown if countdown is not None else 0:.0f}s"
 
         progress_full = f"{progress_text} {countdown_text}"
         # Call common rendering method
@@ -582,7 +582,7 @@ class SlideshowDisplay:
 
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
-        countdown_text = f"{countdown:.0f}s"
+        countdown_text = f"{countdown if countdown is not None else 0:.0f}s"
 
         progress_full = f"{progress_text} {countdown_text}"
         # Helper to measure width of texts
