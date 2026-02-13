@@ -405,9 +405,7 @@ class SlideshowDisplay:
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
         countdown_val = max(0, countdown)  # Use different name to avoid conflict with builtin
-        countdown_text = f"{countdown_val}:.0f}s"
-        progress_full = f"{progress_text} {countdown_text}"
-
+        countdown_text = format("{countdown_val}:.0f}s")        progress_full = f"{progress_text} {{countdown_text}}"
         # Call common rendering method
         self._render_statusbar_common(
             screen_width, screen_height, layout,
@@ -583,9 +581,7 @@ class SlideshowDisplay:
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
         countdown_val = max(0, countdown)  # Use different name to avoid conflict with builtin
-        countdown_text = f"{countdown_val}:.0f}s"
-        progress_full = f"{progress_text} {countdown_text}"
-
+        countdown_text = format("{countdown_val}:.0f}s")        progress_full = f"{progress_text} {{countdown_text}}"
         # Helper to measure width of texts
         def measure_texts_width(texts, spacing=8):
             width = 0
