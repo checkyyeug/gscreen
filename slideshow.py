@@ -1097,7 +1097,7 @@ class SlideshowDisplay:
             target_screen.blit(img_surface, (0, 0))
 
             # Draw status bar (handles rotation internally)
-            self._draw_statusbar()
+            self._draw_statusbar(countdown)
 
             # Flip the display
             pg.display.flip()
