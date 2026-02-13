@@ -20,7 +20,7 @@ from typing import Optional, Tuple, List
 from contextlib import contextmanager
 import random
 
-# Don't import pygame yet - we need to set SDL_VIDEODRIVER first
+# Don't import pygame yet - we need to set SDL_VIDEODRIVER first# Don't import pygame yet - we need to set SDL_VIDEODRIVER first
 pygame = None
 def get_pygame():
     global pygame
