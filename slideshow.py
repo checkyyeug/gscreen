@@ -52,6 +52,7 @@ class SlideshowDisplay:
     """Fullscreen slideshow display for HDMI output with status bar"""
 
     def __init__(self, settings_path: str = "settings.json"):
+        self.settings_path = settings_path
         self.settings = self._load_settings(settings_path)
         self.display_settings = self.settings['display']
         self.slideshow_settings = self.settings['slideshow']
@@ -1792,7 +1793,7 @@ class SlideshowDisplay:
         if not self.images:
             logger.warning("No media files found, attempting sync...")
             from gdrive_sync import GoogleDriveSync
-            sync = GoogleDriveSync()
+            sync = GoogleDriveSync(self.settings_path)
             try:
                 sync.sync()
             except Exception as e:
@@ -1819,7 +1820,7 @@ class SlideshowDisplay:
 
         # Import sync module for periodic updates
         from gdrive_sync import GoogleDriveSync
-        sync = GoogleDriveSync()
+        sync = GoogleDriveSync(self.settings_path)
 
         # Check schedule at startup - if outside active time, show countdown
         if not self._is_active_time():
@@ -1983,7 +1984,7 @@ class SlideshowDisplay:
 
         # For sync checking
         from gdrive_sync import GoogleDriveSync
-        sync = GoogleDriveSync()
+        sync = GoogleDriveSync(self.settings_path)
         last_sync = time.time()
         sync_interval = self.settings['sync']['check_interval_minutes'] * 60
 

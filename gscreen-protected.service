@@ -1,0 +1,58 @@
+[Unit]
+Description=gScreen Slideshow (SD Card Protected)
+After=network.target
+Documentation=https://github.com/yourusername/gscreen
+
+[Service]
+Type=simple
+User=rpi4
+Group=rpi4
+WorkingDirectory=/home/rpi4/gscreen
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYGAME_HIDE_SUPPORT_PROMPT=1"
+Environment="SDL_AUDIODRIVER=alsa"
+
+# 关键：创建 RAM 目录用于日志和临时文件
+ExecStartPre=/bin/mkdir -p /dev/shm/gscreen_logs
+ExecStartPre=/bin/mkdir -p /dev/shm/gscreen_cache
+ExecStartPre=/bin/chown rpi4:rpi4 /dev/shm/gscreen_logs
+ExecStartPre=/bin/chown rpi4:rpi4 /dev/shm/gscreen_cache
+
+# Main service - 日志输出到 stdout（由 journald 处理，存储在内存）
+ExecStart=/home/rpi4/gscreen/venv/bin/python3 -u main.py
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Resource limits to prevent runaway processes
+MemoryLimit=512M
+CPUQuota=80%
+TasksMax=50
+
+# 定期重启服务（每周一次），释放内存，保护 SD 卡
+RuntimeMaxSec=7d
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/home/rpi4/gscreen /dev/shm/gscreen_logs /dev/shm/gscreen_cache /tmp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# IO scheduling - reduce SD card wear
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

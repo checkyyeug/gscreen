@@ -1,0 +1,67 @@
+{
+    "google_drive_url": "https://drive.google.com/drive/folders/YOUR_FOLDER_ID_HERE?usp=sharing",
+    "display": {
+        "hdmi_port": 1,
+        "fullscreen": true,
+        "borderless": true,
+        "background_color": [0, 0, 0],
+        "hide_mouse": true,
+        "show_statusbar": true,
+        "rotation_mode": "software",
+        "rotation": 90,
+        "statusbar_layout": {
+            "opacity": 0.2,
+            "landscape": {
+                "system_info_position": "bottom",
+                "progress_position": "bottom",
+                "file_info_position": "bottom"
+            },
+            "portrait": {
+                "system_info_position": "bottom",
+                "progress_position": "top",
+                "file_info_position": "bottom"
+            }
+        }
+    },
+    "slideshow": {
+        "interval_seconds": 5,
+        "scale_mode": "fit"
+    },
+    "schedule": {
+        "enabled": true,
+        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "start": "07:00",
+        "stop": "22:00"
+    },
+    "audio": {
+        "enabled": true,
+        "device": "hdmi",
+        "volume": 50
+    },
+    "sync": {
+        "_comment": "SD Card Protection: Reduced sync frequency to minimize writes",
+        "check_interval_minutes": 60,
+        "local_cache_dir": "/dev/shm/gscreen_cache",
+        "download_on_start": false,
+        "_sd_protection": {
+            "max_cache_size_mb": 200,
+            "cleanup_old_files": true,
+            "max_file_age_days": 7
+        }
+    },
+    "supported_formats": [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".tiff",
+        ".tif",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".webm"
+    ]
+}
