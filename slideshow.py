@@ -404,8 +404,8 @@ class SlideshowDisplay:
 
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
-        countdown_val = max(0, countdown)  # Use different name to avoid conflict with builtin
-        countdown_text = format("{countdown_val}:.0f}s")
+        countdown = 0  # Use different name to avoid conflict with builtin
+        countdown_text = format("{countdown}:.0f}s")
 
         progress_full = f"{progress_text} {countdown_text}"
         # Call common rendering method
@@ -418,7 +418,7 @@ class SlideshowDisplay:
     def _render_statusbar_common(self, screen_width: int, screen_height: int, layout: dict,
                                file_info_pos: str, system_info_pos: str, progress_pos: str,
                                file_texts: list, sys_texts: list, progress_text: str,
-                               text_spacing: int = 8):
+                               text_spacing: int = 8, countdown: float = 0):
         """Common status bar rendering logic shared by image and video display"""
         pg = get_pygame()
 
@@ -582,8 +582,8 @@ class SlideshowDisplay:
 
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
-        countdown_val = max(0, countdown)  # Use different name to avoid conflict with builtin
-        countdown_text = format("{countdown_val}:.0f}s")
+        countdown = 0  # Use different name to avoid conflict with builtin
+        countdown_text = format("{countdown}:.0f}s")
 
         progress_full = f"{progress_text} {countdown_text}"
         # Helper to measure width of texts
