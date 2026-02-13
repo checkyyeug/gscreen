@@ -48,25 +48,6 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ============= Constants =============
-DEFAULT_STATUSBAR_HEIGHT = 30
-DEFAULT_STATUSBAR_FONT_SIZE = 14
-DEFAULT_STATUSBAR_OPACITY = 0.3
-DEFAULT_IMAGE_CACHE_SIZE = 50
-DEFAULT_IMAGE_CACHE_MEMORY_MB = 100
-VIDEO_FPS_DELAY_MS = 33  # Default frame delay for 30fps
-NETWORK_TIMEOUT_SECONDS = 30
-NETWORK_RETRY_ATTEMPTS = 3
-NETWORK_RETRY_MIN_WAIT = 2
-NETWORK_RETRY_MAX_WAIT = 30
-
-# Day abbreviations for validation
-VALID_DAYS = {'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'}
-VALID_SCALE_MODES = {'fit', 'fill', 'stretch'}
-VALID_ROTATIONS = {0, 90, 180, 270}
-VALID_ROTATION_MODES = {'hardware', 'software'}
-VALID_AUDIO_DEVICES = {'hdmi', 'local'}
-
 class SlideshowDisplay:
     """Fullscreen slideshow display for HDMI output with status bar"""
 
@@ -107,40 +88,6 @@ class SlideshowDisplay:
         # Restart time uses schedule.start (e.g., if display starts at 07:00, restart at 07:00)
         self._restart_scheduled = False
         self._restart_check_interval = 3600  # Check every hour
-
-    def _parse_restart_day(self, day_config) -> int:
-        """Parse restart day from config, supporting both string and integer formats.
-
-        String format: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
-        Integer format (legacy): 0=Sunday, 1=Monday, ..., 6=Saturday
-
-        Returns: Python weekday (0=Monday, ..., 6=Sunday)
-        """
-        # Day name to weekday mapping (Python: 0=Monday, 6=Sunday)
-        DAY_TO_WEEKDAY = {
-            'Mon': 0, 'Monday': 0,
-            'Tue': 1, 'Tuesday': 1,
-            'Wed': 2, 'Wednesday': 2,
-            'Thu': 3, 'Thursday': 3,
-            'Fri': 4, 'Friday': 4,
-            'Sat': 5, 'Saturday': 5,
-            'Sun': 6, 'Sunday': 6,
-        }
-
-        # If string, look up in mapping
-        if isinstance(day_config, str):
-            return DAY_TO_WEEKDAY.get(day_config.capitalize(), 6)  # Default to Sunday
-
-        # Legacy integer format: 0=Sunday, 1=Monday, ..., 6=Saturday
-        # Convert to Python weekday: 0=Monday, ..., 6=Sunday
-        if isinstance(day_config, int):
-            if day_config == 0:  # Sunday
-                return 6
-            else:  # 1=Monday -> 0, 2=Tuesday -> 1, ..., 6=Saturday -> 5
-                return day_config - 1
-
-        # Default to Sunday if invalid
-        return 6
 
         # Status bar layout settings for landscape and portrait
         default_layout = {
@@ -205,6 +152,40 @@ class SlideshowDisplay:
         # Hardware video acceleration (will be set by _detect_hw_accel)
         self.hw_accel_method = None  # 'v4l2m2m', 'drm', or None
         self.hw_accel_enabled = self._detect_hw_accel()
+
+    def _parse_restart_day(self, day_config) -> int:
+        """Parse restart day from config, supporting both string and integer formats.
+
+        String format: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
+        Integer format (legacy): 0=Sunday, 1=Monday, ..., 6=Saturday
+
+        Returns: Python weekday (0=Monday, ..., 6=Sunday)
+        """
+        # Day name to weekday mapping (Python: 0=Monday, 6=Sunday)
+        DAY_TO_WEEKDAY = {
+            'Mon': 0, 'Monday': 0,
+            'Tue': 1, 'Tuesday': 1,
+            'Wed': 2, 'Wednesday': 2,
+            'Thu': 3, 'Thursday': 3,
+            'Fri': 4, 'Friday': 4,
+            'Sat': 5, 'Saturday': 5,
+            'Sun': 6, 'Sunday': 6,
+        }
+
+        # If string, look up in mapping
+        if isinstance(day_config, str):
+            return DAY_TO_WEEKDAY.get(day_config.capitalize(), 6)  # Default to Sunday
+
+        # Legacy integer format: 0=Sunday, 1=Monday, ..., 6=Saturday
+        # Convert to Python weekday: 0=Monday, ..., 6=Sunday
+        if isinstance(day_config, int):
+            if day_config == 0:  # Sunday
+                return 6
+            else:  # 1=Monday -> 0, 2=Tuesday -> 1, ..., 6=Saturday -> 5
+                return day_config - 1
+
+        # Default to Sunday if invalid
+        return 6
 
     def _detect_hw_accel(self) -> bool:
         """Detect if hardware video acceleration is available"""
@@ -281,7 +262,7 @@ class SlideshowDisplay:
             return cached_signal
         
         signal = "N/A"
-        
+
         # Try iwconfig first (more reliable)
         try:
             result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=1)
@@ -289,7 +270,7 @@ class SlideshowDisplay:
                 match = re.search(r'Signal level=(-?\d+) dBm', result.stdout)
                 if match:
                     signal = f"{match.group(1)} dBm"
-        except:
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             pass
 
         # Fallback: try /proc/net/wireless
@@ -305,7 +286,7 @@ class SlideshowDisplay:
                                 # Signal is in dBm already (negative value with decimal)
                                 signal = int(float(parts[3]))
                                 signal = f"{signal} dBm"
-            except:
+            except (OSError, ValueError, IndexError):
                 pass
 
         # Update cache
@@ -463,11 +444,11 @@ class SlideshowDisplay:
             try:
                 # Try Noto Sans CJK for Chinese/Japanese/Korean support
                 self.font = pg.font.SysFont('Noto Sans CJK SC', self.statusbar_font_size, bold=True)
-            except:
+            except (pg.error, FileNotFoundError):
                 try:
                     # Fallback to DejaVuSans
                     self.font = pg.font.SysFont('DejaVuSans', self.statusbar_font_size, bold=True)
-                except:
+                except (pg.error, FileNotFoundError):
                     # Fallback to default font
                     self.font = pg.font.Font(None, self.statusbar_font_size)
 
@@ -660,7 +641,7 @@ class SlideshowDisplay:
                 width, height = map(int, resolution.split(','))
                 logger.info(f"Framebuffer resolution: {width}x{height}")
                 return width, height
-        except:
+        except (OSError, ValueError):
             pass
 
         # Try drm output
@@ -677,9 +658,9 @@ class SlideshowDisplay:
                                     w, h = line.split('x')[:2]
                                     try:
                                         return int(w), int(h)
-                                    except:
+                                    except (ValueError, IndexError):
                                         continue
-        except:
+        except (OSError, ValueError):
             pass
 
         return 1920, 1080  # Default fallback
@@ -859,7 +840,7 @@ class SlideshowDisplay:
                 # Clean up and try next driver
                 try:
                     pg.quit()
-                except:
+                except (pg.error, OSError):
                     pass
 
         # All drivers failed
@@ -957,17 +938,6 @@ class SlideshowDisplay:
         """Generate cache key for an image"""
         return (str(image_path), width, height, self.scale_mode)
 
-    def _get_cached_image(self, image_path: Path, width: int, height: int):
-        """Get cached image surface if available"""
-        key = self._get_cache_key(image_path, width, height)
-        if key in self._image_cache:
-            # Update access order for LRU
-            if key in self._cache_access_order:
-                self._cache_access_order.remove(key)
-            self._cache_access_order.append(key)
-            return self._image_cache[key]
-        return None
-
     def _cache_image(self, image_path: Path, width: int, height: int, surface):
         """Cache an image surface with LRU eviction and memory limit"""
         key = self._get_cache_key(image_path, width, height)
@@ -975,21 +945,22 @@ class SlideshowDisplay:
         with self._cache_lock:
             # Calculate memory usage (RGB surface = width * height * 3 bytes)
             surface_memory_mb = (width * height * 3) / (1024 * 1024)
-            
-            # Evict oldest entries until we have room (memory-based eviction)
+
+            # Calculate current cache memory usage
             current_memory_mb = sum(
                 (k[1] * k[2] * 3) / (1024 * 1024) for k in self._image_cache.keys()
             )
-            
-            while (self._cache_access_order and 
-                   (len(self._image_cache) >= self._max_cache_size or 
+
+            # Evict oldest entries until we have room (memory-based eviction)
+            while (self._cache_access_order and
+                   (len(self._image_cache) >= self._max_cache_size or
                     current_memory_mb + surface_memory_mb > self._max_cache_memory_mb)):
                 oldest_key = self._cache_access_order.pop(0)
                 if oldest_key in self._image_cache:
+                    # Subtract evicted item's memory from total (more efficient than recalc)
+                    _, old_w, old_h, _ = oldest_key
+                    current_memory_mb -= (old_w * old_h * 3) / (1024 * 1024)
                     del self._image_cache[oldest_key]
-                    current_memory_mb = sum(
-                        (k[1] * k[2] * 3) / (1024 * 1024) for k in self._image_cache.keys()
-                    )
 
             self._image_cache[key] = surface
             self._cache_access_order.append(key)
@@ -1027,8 +998,9 @@ class SlideshowDisplay:
 
     def _clear_image_cache(self):
         """Clear the image cache (call when settings change)"""
-        self._image_cache.clear()
-        self._cache_access_order.clear()
+        with self._cache_lock:
+            self._image_cache.clear()
+            self._cache_access_order.clear()
 
     def _periodic_cleanup(self):
         """Periodic garbage collection to prevent memory leaks"""
@@ -1314,7 +1286,7 @@ class SlideshowDisplay:
             last_statusbar_update = start_time
 
             # Thread for reading frames from ffmpeg
-            frame_queue = queue.Queue(maxsize=2)
+            frame_queue = queue.Queue(maxsize=5)  # Increased from 2 to prevent frame drops
             stop_event = threading.Event()
 
             def frame_reader():
@@ -1576,7 +1548,7 @@ class SlideshowDisplay:
                     frame_surface = self._get_surface_from_pool(display_width, display_height)
                     if frame_surface is None:
                         frame_surface = pg.Surface((display_width, display_height))
-                    
+
                     pg.image.frombuffer(
                         frame_rgb.tobytes(),
                         (display_width, display_height),
@@ -1606,6 +1578,9 @@ class SlideshowDisplay:
                     pg.display.flip()
 
                     current_frame_idx += 1
+
+                    # Return surface to pool for reuse (prevents memory leak)
+                    self._return_surface_to_pool(frame_surface)
 
                     # Maintain frame rate timing (ensure minimum delay)
                     elapsed = (time.time() - frame_start_time) * 1000
@@ -1776,7 +1751,7 @@ class SlideshowDisplay:
             try:
                 if restart_marker.read_text().strip() == now.date().isoformat():
                     return False  # Already restarted today
-            except:
+            except (OSError, IOError):
                 pass  # Marker file corrupted, proceed with restart
 
         return True
@@ -1992,7 +1967,7 @@ class SlideshowDisplay:
         # Create a larger font for the no-media message
         try:
             message_font = pg.font.SysFont('DejaVuSans', 32, bold=True)
-        except:
+        except (pg.error, FileNotFoundError):
             message_font = pg.font.Font(None, 48)
 
         # Screen dimensions
@@ -2101,12 +2076,12 @@ class SlideshowDisplay:
             # Try Noto Sans CJK for Chinese/Japanese/Korean support
             large_font = pg.font.SysFont('Noto Sans CJK SC', 48, bold=True)
             medium_font = pg.font.SysFont('Noto Sans CJK SC', 28, bold=True)
-        except:
+        except (pg.error, FileNotFoundError):
             try:
                 # Fallback to DejaVuSans
                 large_font = pg.font.SysFont('DejaVuSans', 48, bold=True)
                 medium_font = pg.font.SysFont('DejaVuSans', 28, bold=True)
-            except:
+            except (pg.error, FileNotFoundError):
                 # Fallback to default font
                 large_font = pg.font.Font(None, 64)
                 medium_font = pg.font.Font(None, 40)
@@ -2211,10 +2186,10 @@ class SlideshowDisplay:
         # Create fonts for error display
         try:
             error_font = pg.font.SysFont('Noto Sans CJK SC', 32, bold=True)
-        except:
+        except (pg.error, FileNotFoundError):
             try:
                 error_font = pg.font.SysFont('DejaVuSans', 32, bold=True)
-            except:
+            except (pg.error, FileNotFoundError):
                 error_font = pg.font.Font(None, 40)
 
         # Screen dimensions
@@ -2253,7 +2228,7 @@ def main():
         with open("settings.json", 'r') as f:
             settings = json.load(f)
         cache_dir = settings['sync']['local_cache_dir']
-    except:
+    except (OSError, json.JSONDecodeError, KeyError):
         cache_dir = "./media"
 
     slideshow = SlideshowDisplay()

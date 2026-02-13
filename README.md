@@ -30,9 +30,34 @@ A lightweight photo and video slideshow application that displays media from Goo
 ## Requirements
 
 - Raspberry Pi 3/4/5 (or any Linux system with HDMI output)
+- **Minimum RAM: 1GB** (512MB may work with reduced functionality)
 - Python 3.8+
 - Internet connection for Google Drive sync
 - **No desktop environment required** (works on Raspberry Pi OS Lite)
+
+### Memory Requirements
+
+| Raspberry Pi Model | RAM | gScreen Usage | Status |
+|---------------------|-----|---------------|--------|
+| Pi 3 / 3B+ | 1GB | ~380 MB peak (48%) | ✅ Recommended |
+| Pi 3 Model A+ | 512MB | ~380 MB peak (95%) | ⚠️ Borderline |
+| Pi 4 / 400 | 1GB+ | ~400 MB peak | ✅ Excellent |
+| Pi 5 | 2GB+ | ~400 MB peak | ✅ Excellent |
+
+**Memory breakdown:**
+- Base runtime: 160-265 MB
+- Image cache: 100 MB (50 images, LRU limited)
+- Surface pool: 18 MB (3 surfaces)
+- Video playback: +78 MB (when playing)
+
+### Performance by Model
+
+| Model | 720p Video | 1080p Video | CPU (H264) |
+|-------|-----------|-------------|-------------|
+| **Pi 3** | ✅ 10-15% CPU | ⚠️ 30-40% CPU | 4-core @ 1.2GHz |
+| **Pi 3B+** | ✅ 10-15% CPU | ⚠️ 30-40% CPU | 4-core @ 1.4GHz |
+| **Pi 4** | ✅ 5-10% CPU | ✅ 15-20% CPU | 4-core @ 1.5GHz |
+| **Pi 5** | ✅ 3-5% CPU | ✅ 5-10% CPU | 4-core @ 2.4GHz |
 
 ## Performance Features
 

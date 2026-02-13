@@ -19,11 +19,54 @@ import logging
 import argparse
 from pathlib import Path
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Load settings early to configure logging
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+def setup_logging_from_settings():
+    """Setup logging based on settings.json configuration"""
+    try:
+        with open("settings.json", 'r') as f:
+            settings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        settings = {}
+    
+    # Check if RAM logging is enabled (default: False for SD card safety)
+    system_settings = settings.get('system', {})
+    log_to_ram = system_settings.get('log_to_ram', False)
+    ram_log_size_mb = system_settings.get('ram_log_size_mb', 50)
+    
+    if log_to_ram:
+        # Log to RAM to protect SD card
+        RAM_LOG_DIR = Path("/dev/shm/gscreen_logs")
+        try:
+            RAM_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            from logging.handlers import RotatingFileHandler
+            logging.basicConfig(
+                level=logging.INFO,
+                format=LOG_FORMAT,
+                handlers=[
+                    logging.StreamHandler(sys.stdout),
+                    RotatingFileHandler(
+                        RAM_LOG_DIR / "gscreen.log",
+                        maxBytes=ram_log_size_mb * 1024 * 1024 // 2,
+                        backupCount=2
+                    )
+                ]
+            )
+            print(f"[INFO] Logging to RAM: {RAM_LOG_DIR} (log_to_ram=true)", file=sys.stderr)
+            return
+        except Exception as e:
+            print(f"[WARN] Could not setup RAM logging: {e}", file=sys.stderr)
+    
+    # Default: log to stdout only (no file writes)
+    logging.basicConfig(
+        level=logging.INFO,
+        format=LOG_FORMAT,
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+
+# Setup logging before anything else
+setup_logging_from_settings()
 logger = logging.getLogger(__name__)
 
 

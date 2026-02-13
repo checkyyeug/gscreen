@@ -50,23 +50,23 @@ def get_folder_contents(folder_id: str) -> List[Dict]:
     response.raise_for_status()
 
     # Parse HTML to find file entries
-        # This is a simplified approach - production code should use proper HTML parsing
-        contents = []
+    # This is a simplified approach - production code should use proper HTML parsing
+    contents = []
 
-        # Look for data-id attributes in the HTML
-        import re
-        file_ids = re.findall(r'"([^"]{20,})"', response.text)
+    # Look for data-id attributes in the HTML
+    import re
+    file_ids = re.findall(r'"([^"]{20,})"', response.text)
 
-        # Filter for file-like IDs (not folder metadata)
-        for file_id in set(file_ids):
-            if len(file_id) > 20 and file_id not in [folder_id]:
-                contents.append({
-                    'id': file_id,
-                    'name': f'file_{file_id[:8]}',
-                    'direct_url': f'https://drive.google.com/uc?id={file_id}&export=download'
-                })
+    # Filter for file-like IDs (not folder metadata)
+    for file_id in set(file_ids):
+        if len(file_id) > 20 and file_id not in [folder_id]:
+            contents.append({
+                'id': file_id,
+                'name': f'file_{file_id[:8]}',
+                'direct_url': f'https://drive.google.com/uc?id={file_id}&export=download'
+            })
 
-        return contents
+    return contents
 
 
 def download_with_gdown(folder_url: str, output_dir: str) -> bool:

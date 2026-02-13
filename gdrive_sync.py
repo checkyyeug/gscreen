@@ -22,7 +22,7 @@ if sys.platform.startswith('linux'):
     import locale
     locale.setlocale(locale.LC_ALL, 'C.UTF-8')
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging will be configured by main module
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +39,10 @@ class GoogleDriveSync:
         # Time sync settings
         self.timezone_offset = self.settings['sync'].get('timezone_offset', 8)  # Default UTC+8
         self.sync_system_time = self.settings['sync'].get('sync_system_time', True)
+        
+        # SD Card Protection: Rate limiting
+        self._last_sync_time = 0
+        self._min_sync_interval = self.settings['sync'].get('min_sync_interval_seconds', 300)  # 5 minutes minimum
 
     def _load_settings(self, path: str) -> dict:
         """Load settings from JSON file"""
@@ -149,6 +153,15 @@ class GoogleDriveSync:
         - Syncs system time via NTP if enabled
         Returns True if any changes were made.
         """
+        # SD Card Protection: Rate limiting
+        import time
+        now = time.time()
+        elapsed = now - self._last_sync_time
+        if elapsed < self._min_sync_interval:
+            logger.debug(f"Sync throttled. Last sync was {elapsed:.0f}s ago (min: {self._min_sync_interval}s)")
+            return False
+        
+        self._last_sync_time = now
         logger.info("Starting sync...")
 
         # Sync system time if enabled
@@ -284,7 +297,7 @@ class GoogleDriveSync:
             logger.warning("[TimeSync] Cannot set time without TTY or root access")
             logger.info("[TimeSync] To enable auto time sync, add this to /etc/sudoers:")
             logger.info("[TimeSync]   rpi4 ALL=(ALL) NOPASSWD: /usr/bin/date")
-            return
+            return False
 
         try:
             import ntplib
