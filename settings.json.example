@@ -40,16 +40,17 @@
     },
     "sync": {
         "check_interval_minutes": 3,
+        "min_sync_interval_seconds": 180,
         "local_cache_dir": "./media",
-        "download_on_start": false,
+        "download_on_start": true,
         "timezone_offset": 8,
         "sync_system_time": true
     },
     "system": {
         "_comment": "System-level settings for SD card protection and maintenance",
         "weekly_auto_restart": true,
-        "weekly_restart_day": 0,
-        "log_to_ram": false,
+        "weekly_restart_day": "Sun",
+        "log_to_ram": true,
         "ram_log_size_mb": 50,
         "enable_health_monitoring": true,
         "health_check_interval_hours": 6
