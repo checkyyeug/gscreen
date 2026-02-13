@@ -15,8 +15,11 @@ import signal
 import subprocess
 import datetime
 import re
+import gc
+import threading
+import queue
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 from contextlib import contextmanager
 import random# Don't import pygame yet - we need to set SDL_VIDEODRIVER first
 pygame = None
@@ -41,6 +44,7 @@ try:
 except ImportError:
     cv2 = None
 
+# SD Card Protection: Setup logging (will be reconfigured in SlideshowDisplay.__init__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -92,6 +96,52 @@ class SlideshowDisplay:
         self.schedule_start = self.schedule_settings.get('start', '07:00')
         self.schedule_stop = self.schedule_settings.get('stop', '23:00')
 
+        # System settings (SD card protection)
+        self.system_settings = self.settings.get('system', {})
+        self.weekly_auto_restart = self.system_settings.get('weekly_auto_restart', True)  # Default: enabled
+
+        # Parse weekly_restart_day: support both string ("Mon"..."Sun") and integer (0=Sun, 1=Mon) for backward compatibility
+        restart_day_config = self.system_settings.get('weekly_restart_day', 'Sun')
+        self.weekly_restart_day = self._parse_restart_day(restart_day_config)
+
+        # Restart time uses schedule.start (e.g., if display starts at 07:00, restart at 07:00)
+        self._restart_scheduled = False
+        self._restart_check_interval = 3600  # Check every hour
+
+    def _parse_restart_day(self, day_config) -> int:
+        """Parse restart day from config, supporting both string and integer formats.
+
+        String format: "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
+        Integer format (legacy): 0=Sunday, 1=Monday, ..., 6=Saturday
+
+        Returns: Python weekday (0=Monday, ..., 6=Sunday)
+        """
+        # Day name to weekday mapping (Python: 0=Monday, 6=Sunday)
+        DAY_TO_WEEKDAY = {
+            'Mon': 0, 'Monday': 0,
+            'Tue': 1, 'Tuesday': 1,
+            'Wed': 2, 'Wednesday': 2,
+            'Thu': 3, 'Thursday': 3,
+            'Fri': 4, 'Friday': 4,
+            'Sat': 5, 'Saturday': 5,
+            'Sun': 6, 'Sunday': 6,
+        }
+
+        # If string, look up in mapping
+        if isinstance(day_config, str):
+            return DAY_TO_WEEKDAY.get(day_config.capitalize(), 6)  # Default to Sunday
+
+        # Legacy integer format: 0=Sunday, 1=Monday, ..., 6=Saturday
+        # Convert to Python weekday: 0=Monday, ..., 6=Sunday
+        if isinstance(day_config, int):
+            if day_config == 0:  # Sunday
+                return 6
+            else:  # 1=Monday -> 0, 2=Tuesday -> 1, ..., 6=Saturday -> 5
+                return day_config - 1
+
+        # Default to Sunday if invalid
+        return 6
+
         # Status bar layout settings for landscape and portrait
         default_layout = {
             'opacity': 0.3,
@@ -130,11 +180,72 @@ class SlideshowDisplay:
         # Image cache to avoid repeated loading/scaling
         self._image_cache = {}  # {(path, width, height, scale_mode): surface}
         self._max_cache_size = 50  # Maximum number of cached images
+        self._max_cache_memory_mb = 100  # Maximum cache memory in MB
         self._cache_access_order = []  # Track access order for LRU eviction
+        self._cache_lock = threading.Lock()  # Thread-safe cache access
 
         # Current image info
         self.current_image_path = None
         self.current_image_info = {}
+
+        # Memory management: periodic garbage collection
+        self._last_gc_time = time.time()
+        self._gc_interval = 300  # Run GC every 5 minutes (300 seconds)
+        self._frame_count = 0  # Track frames for more frequent light cleanup
+
+        # Surface memory pool for video playback (prevents memory fragmentation)
+        self._surface_pool: List[pg.Surface] = []
+        self._surface_pool_max = 3  # Keep only a few surfaces in pool
+        self._surface_pool_lock = threading.Lock()
+
+        # WiFi signal cache (reduces subprocess calls)
+        self._wifi_signal_cache = ("N/A", 0)
+        self._wifi_cache_ttl = 30  # 30 seconds cache
+
+        # Hardware video acceleration (will be set by _detect_hw_accel)
+        self.hw_accel_method = None  # 'v4l2m2m', 'drm', or None
+        self.hw_accel_enabled = self._detect_hw_accel()
+
+    def _detect_hw_accel(self) -> bool:
+        """Detect if hardware video acceleration is available"""
+        # Check for ffmpeg with hardware acceleration support
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-hwaccels'],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            hwaccels = result.stdout
+
+            # Check for V4L2 M2M (VideoCore VI on Raspberry Pi)
+            if 'v4l2m2m' in hwaccels:
+                self.hw_accel_method = 'v4l2m2m'
+                logger.info("Hardware acceleration detected: v4l2m2m (VideoCore VI)")
+                return True
+
+            # Check for other methods
+            if 'drm' in hwaccels:
+                self.hw_accel_method = 'drm'
+                logger.info("Hardware acceleration detected: drm")
+                return True
+
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Check for V4L2 devices (fallback detection)
+        try:
+            v4l2_devices = list(Path('/dev').glob('video*'))
+            if v4l2_devices:
+                logger.info(f"V4L2 devices found: {len(v4l2_devices)}, trying hardware acceleration")
+                self.hw_accel_method = 'v4l2m2m'
+                return True
+        except Exception:
+            pass
+
+        logger.info("No hardware acceleration detected, using CPU decoding")
+        self.hw_accel_method = None
+        return False
 
     def _load_settings(self, path: str) -> dict:
         """Load and validate settings from JSON file"""
@@ -161,33 +272,45 @@ class SlideshowDisplay:
         return settings
 
     def _get_wifi_signal(self) -> str:
-        """Get WiFi signal strength in dBm"""
+        """Get WiFi signal strength in dBm with caching"""
+        now = time.time()
+        cached_signal, cached_time = self._wifi_signal_cache
+        
+        # Return cached value if still valid
+        if now - cached_time < self._wifi_cache_ttl:
+            return cached_signal
+        
+        signal = "N/A"
+        
         # Try iwconfig first (more reliable)
         try:
             result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=1)
             if 'Signal level' in result.stdout:
                 match = re.search(r'Signal level=(-?\d+) dBm', result.stdout)
                 if match:
-                    return f"{match.group(1)} dBm"
+                    signal = f"{match.group(1)} dBm"
         except:
             pass
 
         # Fallback: try /proc/net/wireless
-        try:
-            if os.path.exists('/proc/net/wireless'):
-                with open('/proc/net/wireless', 'r') as f:
-                    lines = f.readlines()
-                    if len(lines) >= 3:
-                        # Parse signal level (4th column on data line)
-                        parts = lines[2].split()
-                        if len(parts) >= 4:
-                            # Signal is in dBm already (negative value with decimal)
-                            signal = int(float(parts[3]))
-                            return f"{signal} dBm"
-        except:
-            pass
+        if signal == "N/A":
+            try:
+                if os.path.exists('/proc/net/wireless'):
+                    with open('/proc/net/wireless', 'r') as f:
+                        lines = f.readlines()
+                        if len(lines) >= 3:
+                            # Parse signal level (4th column on data line)
+                            parts = lines[2].split()
+                            if len(parts) >= 4:
+                                # Signal is in dBm already (negative value with decimal)
+                                signal = int(float(parts[3]))
+                                signal = f"{signal} dBm"
+            except:
+                pass
 
-        return "N/A"
+        # Update cache
+        self._wifi_signal_cache = (signal, now)
+        return signal
 
     def _is_active_time(self) -> bool:
         """Check if current time is within the scheduled active time"""
@@ -315,14 +438,18 @@ class SlideshowDisplay:
             if cv2 is not None:
                 cap = cv2.VideoCapture(str(video_path))
                 if cap.isOpened():
-                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    fps = cap.get(cv2.CAP_PROP_FPS)
-                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    duration = frame_count / fps if fps > 0 else 0
+                    try:
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        duration = frame_count / fps if fps > 0 else 0
 
-                    info['dimensions'] = f"{width}x{height}"
-                    info['duration'] = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                        info['dimensions'] = f"{width}x{height}"
+                        info['duration'] = f"{int(duration // 60)}:{int(duration % 60):02d}"
+                    finally:
+                        cap.release()
+                else:
                     cap.release()
         except Exception as e:
             logger.debug(f"Error getting video info: {e}")
@@ -404,8 +531,9 @@ class SlideshowDisplay:
 
         # Prepare progress texts
         progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
-        countdown = 0  # Use different name to avoid conflict with builtin
-        countdown_text = f"{countdown if countdown is not None else 0:.0f}s"
+        # Use the countdown parameter passed in, default to 0 if None
+        countdown_val = countdown if countdown is not None else 0
+        countdown_text = f"{countdown_val:.0f}s"
 
         progress_full = f"{progress_text} {countdown_text}"
         # Call common rendering method
@@ -429,12 +557,13 @@ class SlideshowDisplay:
             s.fill((*self.statusbar_bg_color_base, alpha))
             return s
 
-        # Helper to measure width of texts
+        # Helper to measure width of texts without creating persistent surfaces
         def measure_texts_width(texts, spacing=text_spacing):
             width = 0
             for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                width += text_surface.get_width() + spacing
+                # Use size() which doesn't create a surface
+                text_size = self.font.size(text)
+                width += text_size[0] + spacing
             return width
 
         # Helper to draw text on left side of surface
@@ -445,6 +574,8 @@ class SlideshowDisplay:
                 text_surface = self.font.render(text, True, self.statusbar_text_color)
                 surface.blit(text_surface, (x_offset, y_offset))
                 x_offset += text_surface.get_width() + text_spacing
+                # Explicitly delete to help GC
+                del text_surface
 
         # Helper to draw text on right side of surface
         def draw_texts_right(surface, texts):
@@ -455,12 +586,14 @@ class SlideshowDisplay:
                 x_offset -= text_surface.get_width()
                 surface.blit(text_surface, (x_offset, y_offset))
                 x_offset -= text_spacing
+                del text_surface
 
         # Helper to draw centered text
         def draw_text_center(surface, text):
             text_surface = self.font.render(text, True, self.statusbar_text_color)
             text_x = (screen_width - text_surface.get_width()) // 2
             surface.blit(text_surface, (text_x, 2))
+            del text_surface
 
         # Collect content for each position (top/bottom)
         position_content = {'top': {'left': None, 'center': None, 'right': None},
@@ -487,8 +620,8 @@ class SlideshowDisplay:
             center_width = 0
             center_x = 0
             if content['center']:
-                center_surface = self.font.render(content['center'], True, self.statusbar_text_color)
-                center_width = center_surface.get_width()
+                center_size = self.font.size(content['center'])
+                center_width = center_size[0]
                 center_x = (screen_width - center_width) // 2
 
             draw_center = True
@@ -516,173 +649,6 @@ class SlideshowDisplay:
         # Apply software rotation if needed (must be done even if statusbar is hidden)
         if self.rotation_mode == 'software' and self.rotation in [90, 180, 270]:
             self._apply_rotation_to_screen()
-
-        if not self.show_statusbar:
-            return
-
-        pg = get_pygame()
-        self._init_font()
-
-        screen_width = self.virt_width
-        screen_height = self.virt_height
-
-        # Determine orientation and get corresponding layout
-        is_portrait = self.rotation in [90, 270]
-        orientation = 'portrait' if is_portrait else 'landscape'
-        layout = self.statusbar_layout.get(orientation, {
-            'file_info_position': 'top' if not is_portrait else 'bottom',
-            'system_info_position': 'top' if not is_portrait else 'bottom',
-            'progress_position': 'bottom' if not is_portrait else 'top'
-        })
-
-        file_info_pos = layout.get('file_info_position', 'top' if not is_portrait else 'bottom')
-        system_info_pos = layout.get('system_info_position', 'top' if not is_portrait else 'bottom')
-        progress_pos = layout.get('progress_position', 'bottom' if not is_portrait else 'top')
-
-        if self.rotation in [90, 270]:
-            physical_res = f"{self.screen_height}x{self.screen_width}"
-        else:
-            physical_res = f"{self.screen_width}x{self.screen_height}"
-
-        # Helper to draw semi-transparent status bar surface
-        def create_statusbar_surface(width, height):
-            s = pg.Surface((width, height), pg.SRCALPHA)
-            alpha = int(self.statusbar_opacity * 255)
-            s.fill((*self.statusbar_bg_color_base, alpha))
-            return s
-
-        # Prepare file info texts
-        file_texts = []
-        if self.current_image_info:
-            name = self.current_image_info.get('name', '')
-            if len(name) > 25:
-                name = name[:22] + '...'
-            file_texts = [
-                f"{name}",
-                f"{self.current_image_info.get('modified', '')}",
-            ]
-            dims = self.current_image_info.get('dimensions', '')
-            if dims:
-                file_texts.append(f"{dims}")
-            fmt = self.current_image_info.get('format', '')
-            if fmt:
-                file_texts.append(f"{fmt}")
-
-        # Prepare system info texts
-        sys_texts = [
-            f"{physical_res}",
-            f"R:{self.rotation}°",
-            f"{datetime.datetime.now().strftime('%H:%M:%S')}",
-            f"WiFi:{self._get_wifi_signal()}",
-        ]
-        if self.last_sync_time:
-            sync_str = self.last_sync_time.strftime('%H:%M')
-            sys_texts.append(f"Sync:{sync_str}")
-        sys_texts.append(f"Total:{len(self.images)}")
-
-        # Prepare progress texts
-        progress_text = f"{self.current_image_index + 1}/{len(self.images)}"
-        countdown_text = f"{countdown if countdown is not None else 0:.0f}s"
-
-        progress_full = f"{progress_text} {countdown_text}"
-        # Helper to measure width of texts
-        def measure_texts_width(texts, spacing=8):
-            width = 0
-            for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                width += text_surface.get_width() + spacing
-            return width
-
-        # Helper to draw text on left side of surface
-        def draw_texts_left(surface, texts):
-            y_offset = 2
-            x_offset = 10
-            for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                surface.blit(text_surface, (x_offset, y_offset))
-                x_offset += text_surface.get_width() + 8
-
-        # Helper to draw text on right side of surface
-        def draw_texts_right(surface, texts):
-            y_offset = 2
-            x_offset = screen_width - 10
-            for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
-                x_offset -= text_surface.get_width()
-                surface.blit(text_surface, (x_offset, y_offset))
-                x_offset -= 8
-
-        # Helper to draw centered text
-        def draw_text_center(surface, text):
-            text_surface = self.font.render(text, True, self.statusbar_text_color)
-            text_x = (screen_width - text_surface.get_width()) // 2
-            surface.blit(text_surface, (text_x, 2))
-
-        # Collect what to draw on each position (top/bottom)
-        # Each position can have: left content (file_info), center content (progress), right content (system_info)
-        position_content = {'top': {'left': None, 'center': None, 'right': None},
-                         'bottom': {'left': None, 'center': None, 'right': None}}
-
-        # Assign content to positions based on config
-        position_content[file_info_pos]['left'] = file_texts
-        position_content[system_info_pos]['right'] = sys_texts
-        position_content[progress_pos]['center'] = progress_full
-
-        # Draw each position
-        for pos in ['top', 'bottom']:
-            content = position_content[pos]
-            if content['left'] is None and content['center'] is None and content['right'] is None:
-                continue  # Nothing to draw on this position
-
-            # Create surface for this position
-            surface = create_statusbar_surface(screen_width, self.statusbar_height)
-            y = 0 if pos == 'top' else screen_height - self.statusbar_height
-
-            # Pre-calculate widths to check for overlaps
-            left_width = measure_texts_width(content['left']) if content['left'] else 0
-            right_width = measure_texts_width(content['right']) if content['right'] else 0
-
-            # Render center text to get its width
-            center_width = 0
-            center_x = 0
-            if content['center']:
-                center_surface = self.font.render(content['center'], True, self.statusbar_text_color)
-                center_width = center_surface.get_width()
-                center_x = (screen_width - center_width) // 2
-
-            # Determine which content can be drawn without overlap
-            # Priority: left > right > center
-            draw_center = True
-            draw_right = True
-
-            # Check if center overlaps with left
-            if content['center'] and center_x < left_width + 20:
-                draw_center = False
-
-            # Check if center overlaps with right (right starts at screen_width - right_width - 10)
-            if content['center'] and center_x + center_width > screen_width - right_width - 20:
-                draw_center = False
-
-            # If center is not drawn, check if right overlaps with left
-            if not draw_center and content['right'] and screen_width - right_width - 10 < left_width + 20:
-                draw_right = False
-
-            # Now draw the content
-            if content['left']:
-                draw_texts_left(surface, content['left'])
-
-            if draw_center and content['center']:
-                draw_text_center(surface, content['center'])
-
-            if draw_right and content['right']:
-                draw_texts_right(surface, content['right'])
-
-            # Clear the status bar area on screen first to avoid artifacts from previous semi-transparent draws
-            clear_surface = pg.Surface((screen_width, self.statusbar_height))
-            clear_surface.fill(self.bg_color)
-            self.virtual_screen.blit(clear_surface, (0, y))
-            # Then blit the semi-transparent status bar
-            self.virtual_screen.blit(surface, (0, y))
 
 
     def _get_display_resolution(self) -> Tuple[int, int]:
@@ -906,8 +872,11 @@ class SlideshowDisplay:
             "  - Make sure you're in the video group: groups $USER"
         )
 
+    # Maximum number of media files to prevent memory issues
+    MAX_MEDIA_FILES = 2000
+
     def load_images(self, cache_dir: str) -> list[Path]:
-        """Load all images from cache directory"""
+        """Load all images from cache directory with limit to prevent memory issues"""
         cache_path = Path(cache_dir)
         if not cache_path.exists():
             logger.warning(f"Cache directory not found: {cache_dir}")
@@ -919,6 +888,10 @@ class SlideshowDisplay:
         for file in cache_path.iterdir():
             if file.is_file() and file.suffix.lower() in supported:
                 images.append(file)
+                # Prevent unbounded growth
+                if len(images) >= self.MAX_MEDIA_FILES:
+                    logger.warning(f"Reached maximum media file limit ({self.MAX_MEDIA_FILES}), skipping remaining files")
+                    break
 
         logger.info(f"Loaded {len(images)} images from {cache_dir}")
         return sorted(images)
@@ -996,21 +969,107 @@ class SlideshowDisplay:
         return None
 
     def _cache_image(self, image_path: Path, width: int, height: int, surface):
-        """Cache an image surface with LRU eviction"""
+        """Cache an image surface with LRU eviction and memory limit"""
         key = self._get_cache_key(image_path, width, height)
+        
+        with self._cache_lock:
+            # Calculate memory usage (RGB surface = width * height * 3 bytes)
+            surface_memory_mb = (width * height * 3) / (1024 * 1024)
+            
+            # Evict oldest entries until we have room (memory-based eviction)
+            current_memory_mb = sum(
+                (k[1] * k[2] * 3) / (1024 * 1024) for k in self._image_cache.keys()
+            )
+            
+            while (self._cache_access_order and 
+                   (len(self._image_cache) >= self._max_cache_size or 
+                    current_memory_mb + surface_memory_mb > self._max_cache_memory_mb)):
+                oldest_key = self._cache_access_order.pop(0)
+                if oldest_key in self._image_cache:
+                    del self._image_cache[oldest_key]
+                    current_memory_mb = sum(
+                        (k[1] * k[2] * 3) / (1024 * 1024) for k in self._image_cache.keys()
+                    )
 
-        # Evict oldest if cache is full
-        while len(self._image_cache) >= self._max_cache_size:
-            oldest_key = self._cache_access_order.pop(0)
-            del self._image_cache[oldest_key]
+            self._image_cache[key] = surface
+            self._cache_access_order.append(key)
+    
+    def _get_cached_image(self, image_path: Path, width: int, height: int):
+        """Get cached image surface if available"""
+        key = self._get_cache_key(image_path, width, height)
+        with self._cache_lock:
+            if key in self._image_cache:
+                # Update access order for LRU
+                if key in self._cache_access_order:
+                    self._cache_access_order.remove(key)
+                self._cache_access_order.append(key)
+                return self._image_cache[key]
+            return None
 
-        self._image_cache[key] = surface
-        self._cache_access_order.append(key)
+    def _get_surface_from_pool(self, width: int, height: int) -> Optional['pg.Surface']:
+        """Get a surface from the pool or create new one"""
+        with self._surface_pool_lock:
+            for i, surf in enumerate(self._surface_pool):
+                if surf.get_width() == width and surf.get_height() == height:
+                    return self._surface_pool.pop(i)
+        return None
+    
+    def _return_surface_to_pool(self, surf: 'pg.Surface'):
+        """Return a surface to the pool for reuse"""
+        if surf is None:
+            return
+        with self._surface_pool_lock:
+            if len(self._surface_pool) < self._surface_pool_max:
+                self._surface_pool.append(surf)
+            else:
+                # Pool is full, just let GC handle it
+                pass
 
     def _clear_image_cache(self):
         """Clear the image cache (call when settings change)"""
         self._image_cache.clear()
         self._cache_access_order.clear()
+
+    def _periodic_cleanup(self):
+        """Periodic garbage collection to prevent memory leaks"""
+        current_time = time.time()
+        self._frame_count += 1
+
+        # Full GC every 5 minutes
+        if current_time - self._last_gc_time >= self._gc_interval:
+            gc.collect()
+            self._last_gc_time = current_time
+            # Clean up surface pool periodically
+            with self._surface_pool_lock:
+                self._surface_pool.clear()
+            logger.debug("Ran periodic garbage collection and cleared surface pool")
+
+        # Light cleanup every 100 frames (approx every 5 seconds at 20fps)
+        elif self._frame_count % 100 == 0:
+            # Young generation GC only (faster, less disruptive)
+            gc.collect(generation=0)
+    
+    def _log_memory_usage(self):
+        """Log current memory usage for monitoring"""
+        try:
+            import psutil
+            process = psutil.Process()
+            mem_info = process.memory_info()
+            # Calculate cache memory
+            cache_memory_mb = sum(
+                (k[1] * k[2] * 3) / (1024 * 1024) for k in self._image_cache.keys()
+            )
+            logger.info(
+                f"Memory: RSS={mem_info.rss/1024/1024:.1f}MB, "
+                f"VMS={mem_info.vms/1024/1024:.1f}MB, "
+                f"Cache={len(self._image_cache)} imgs ({cache_memory_mb:.1f}MB), "
+                f"Pool={len(self._surface_pool)} surfaces"
+            )
+        except ImportError:
+            # psutil not available, skip memory logging
+            pass
+        except Exception as e:
+            logger.debug(f"Could not log memory usage: {e}")
 
     def display_image(self, image_path: Path) -> bool:
         """Load and display an image"""
@@ -1036,41 +1095,40 @@ class SlideshowDisplay:
             else:
                 # Use PIL for better image loading
                 if Image is not None:
-                    pil_image = Image.open(image_path)
+                    with Image.open(image_path) as pil_image:
+                        # Convert to RGB if necessary
+                        if pil_image.mode != 'RGB':
+                            pil_image = pil_image.convert('RGB')
 
-                    # Convert to RGB if necessary
-                    if pil_image.mode != 'RGB':
-                        pil_image = pil_image.convert('RGB')
+                        img_width, img_height = pil_image.size
 
-                    img_width, img_height = pil_image.size
+                        # Calculate dimensions based on scale mode
+                        if self.scale_mode == 'fit':
+                            x, y, new_width, new_height = self.calculate_fit_size(
+                                img_width, img_height, screen_width, screen_height
+                            )
+                            # Resize and place
+                            resized = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                            # Create background and paste
+                            background = Image.new('RGB', (screen_width, screen_height), self.bg_color)
+                            background.paste(resized, (x, y))
+                            final_image = background
+                        elif self.scale_mode == 'fill':
+                            # Fill mode - crop to fill screen
+                            crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
+                                img_width, img_height, screen_width, screen_height
+                            )
+                            cropped = pil_image.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
+                            final_image = cropped.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
+                        else:  # stretch
+                            final_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
 
-                    # Calculate dimensions based on scale mode
-                    if self.scale_mode == 'fit':
-                        x, y, new_width, new_height = self.calculate_fit_size(
-                            img_width, img_height, screen_width, screen_height
+                        # Convert to pygame surface
+                        img_surface = pg.image.fromstring(
+                            final_image.tobytes(),
+                            final_image.size,
+                            final_image.mode
                         )
-                        # Resize and place
-                        pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                        # Create background and paste
-                        background = Image.new('RGB', (screen_width, screen_height), self.bg_color)
-                        background.paste(pil_image, (x, y))
-                        pil_image = background
-                    elif self.scale_mode == 'fill':
-                        # Fill mode - crop to fill screen
-                        crop_x, crop_y, crop_w, crop_h = self.calculate_fill_size(
-                            img_width, img_height, screen_width, screen_height
-                        )
-                        pil_image = pil_image.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
-                        pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
-                    else:  # stretch
-                        pil_image = pil_image.resize((screen_width, screen_height), Image.Resampling.LANCZOS)
-
-                    # Convert to pygame surface
-                    img_surface = pg.image.fromstring(
-                        pil_image.tobytes(),
-                        pil_image.size,
-                        pil_image.mode
-                    )
                     # Cache the result
                     self._cache_image(image_path, screen_width, screen_height, img_surface)
                 else:
@@ -1097,7 +1155,8 @@ class SlideshowDisplay:
             target_screen.blit(img_surface, (0, 0))
 
             # Draw status bar (handles rotation internally)
-            self._draw_statusbar(countdown)
+            # For images, countdown is not applicable (shown as 0s)
+            self._draw_statusbar(0)
 
             # Flip the display
             pg.display.flip()
@@ -1113,8 +1172,13 @@ class SlideshowDisplay:
         """Load and display a video file"""
         # If audio is enabled, use ffplay for audio+video playback
         if self.audio_enabled:
+            if self.hw_accel_enabled:
+                return self._display_video_with_audio_hw(video_path)
             return self._display_video_with_audio(video_path)
-        # Otherwise use OpenCV for video-only playback
+        # Try hardware accelerated playback first
+        if self.hw_accel_enabled:
+            return self._display_video_hw_accel(video_path)
+        # Fallback to OpenCV for video-only playback
         return self._display_video_opencv(video_path)
 
     def _display_video_with_audio(self, video_path: Path) -> bool:
@@ -1161,14 +1225,7 @@ class SlideshowDisplay:
             result = self._display_video_opencv(video_path, skip_audio_check=True)
 
             # Clean up ffplay process
-            try:
-                ffplay_process.terminate()
-                ffplay_process.wait(timeout=2)
-            except:
-                try:
-                    ffplay_process.kill()
-                except:
-                    pass
+            self._cleanup_process(ffplay_process, timeout=2.0)
 
             return result
 
@@ -1178,6 +1235,234 @@ class SlideshowDisplay:
         except Exception as e:
             logger.error(f"Error playing video with audio: {e}")
             return self._display_video_opencv(video_path)
+
+    def _display_video_hw_accel(self, video_path: Path) -> bool:
+        """Play video with hardware acceleration (ffmpeg v4l2m2m/drm)"""
+        import subprocess
+        pg = get_pygame()
+
+        # Get video info for status bar
+        self.current_image_path = video_path
+        self.current_image_info = self._get_video_info(video_path)
+
+        video_width = self.virt_width
+        video_height = self.virt_height
+
+        # Calculate display dimensions based on scale mode
+        if self.scale_mode == 'fit':
+            # Get original video dimensions first
+            temp_cap = cv2.VideoCapture(str(video_path))
+            try:
+                if temp_cap.isOpened():
+                    orig_w = int(temp_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    orig_h = int(temp_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    x, y, new_width, new_height = self.calculate_fit_size(
+                        orig_w, orig_h, video_width, video_height
+                    )
+                    scale_filter = f'scale={new_width}:{new_height}'
+                    x_offset = (video_width - new_width) // 2
+                    y_offset = (video_height - new_height) // 2
+                else:
+                    scale_filter = f'scale={video_width}:{video_height}'
+                    x_offset = y_offset = 0
+            finally:
+                temp_cap.release()
+        elif self.scale_mode == 'fill':
+            scale_filter = f'scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,crop={video_width}:{video_height}'
+            x_offset = y_offset = 0
+        else:  # stretch
+            scale_filter = f'scale={video_width}:{video_height}'
+            x_offset = y_offset = 0
+
+        # Build ffmpeg command with hardware acceleration
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-threads', '1',  # Single thread for hardware decoding
+            '-loglevel', 'error',  # Reduce log output
+        ]
+
+        # Add hardware acceleration options
+        if self.hw_accel_method == 'v4l2m2m':
+            ffmpeg_cmd.extend(['-hwaccel', 'v4l2m2m', '-hwaccel_output_format', 'drm_prime'])
+        elif self.hw_accel_method == 'drm':
+            ffmpeg_cmd.extend(['-hwaccel', 'drm'])
+
+        ffmpeg_cmd.extend([
+            '-i', str(video_path),
+            '-vf', scale_filter,
+            '-f', 'rawvideo',
+            '-pix_fmt', 'rgb24',
+            'pipe:1'
+        ])
+
+        logger.info(f"Playing video with HW acceleration ({self.hw_accel_method}): {video_path.name}")
+
+        try:
+            # Start ffmpeg process
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL
+            )
+
+            # Calculate frame size
+            frame_size = video_width * video_height * 3  # RGB24 = 3 bytes per pixel
+
+            start_time = time.time()
+            fps = 30  # Default FPS estimation
+            last_statusbar_update = start_time
+
+            # Thread for reading frames from ffmpeg
+            frame_queue = queue.Queue(maxsize=2)
+            stop_event = threading.Event()
+
+            def frame_reader():
+                """Read frames from ffmpeg in separate thread"""
+                try:
+                    while not stop_event.is_set():
+                        frame_data = process.stdout.read(frame_size)
+                        if len(frame_data) < frame_size:
+                            break
+                        try:
+                            frame_queue.put(frame_data, timeout=1.0)
+                        except queue.Full:
+                            pass  # Skip frame if queue is full
+                except Exception as e:
+                    logger.debug(f"Frame reader error: {e}")
+                finally:
+                    frame_queue.put(None)  # Signal end of stream
+
+            # Start frame reader thread
+            reader_thread = threading.Thread(target=frame_reader, daemon=True)
+            reader_thread.start()
+
+            target_screen = self.virtual_screen if self.rotation_mode == 'software' else self.screen
+
+            while self.running:
+                # Handle events
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
+                        self.running = False
+                        break
+                    elif event.type == pg.KEYDOWN:
+                        if event.key == pg.K_ESCAPE:
+                            self.running = False
+                            break
+                        elif event.key == pg.K_SPACE:
+                            return True  # Skip to next
+                        elif event.key == pg.K_q:
+                            self.running = False
+                            break
+
+                if not self.running:
+                    break
+
+                # Get frame from queue
+                try:
+                    frame_data = frame_queue.get(timeout=0.1)
+                    if frame_data is None:
+                        break  # End of stream
+                except queue.Empty:
+                    continue
+
+                # Create pygame surface from frame data
+                frame_surface = pg.image.frombuffer(frame_data, (video_width, video_height), 'RGB')
+
+                # Display frame
+                target_screen.fill(self.bg_color)
+                target_screen.blit(frame_surface, (x_offset, y_offset))
+
+                # Update status bar periodically
+                current_time = time.time()
+                if current_time - last_statusbar_update >= 0.5:
+                    elapsed = current_time - start_time
+                    # Estimate duration from video info
+                    duration_str = self.current_image_info.get('duration', '0:00')
+                    mins, secs = map(int, duration_str.split(':'))
+                    duration = mins * 60 + secs
+                    remaining = max(0, duration - elapsed)
+
+                    self._draw_statusbar_video(
+                        elapsed, remaining, duration,
+                        0, 0  # Frame info not available with ffmpeg
+                    )
+                    last_statusbar_update = current_time
+
+                # Apply software rotation if needed
+                if self.rotation_mode == 'software' and self.rotation in [90, 180, 270]:
+                    self._apply_rotation_to_screen()
+
+                pg.display.flip()
+
+                # Maintain frame rate
+                time.sleep(1.0 / fps)
+
+            # Cleanup
+            stop_event.set()
+            reader_thread.join(timeout=1.0)
+
+            self._cleanup_process(process, timeout=2.0)
+
+            logger.info(f"Video playback finished: {video_path.name}")
+            return True
+
+        except FileNotFoundError:
+            logger.warning("ffmpeg not found. Falling back to OpenCV.")
+            return self._display_video_opencv(video_path)
+        except Exception as e:
+            logger.error(f"Error in HW accelerated playback: {e}, falling back to OpenCV")
+            return self._display_video_opencv(video_path)
+
+    def _display_video_with_audio_hw(self, video_path: Path) -> bool:
+        """Play video with audio using hardware-accelerated video + ffplay audio"""
+        import subprocess
+        import os
+
+        try:
+            # Get video info for status bar
+            self.current_image_path = video_path
+            self.current_image_info = self._get_video_info(video_path)
+
+            logger.info(f"Playing video with audio + HW acceleration: {video_path.name}")
+
+            # Audio output device mapping
+            audio_device_map = {'hdmi': '0', 'local': '1'}
+            alsa_device = audio_device_map.get(self.audio_device, '0')
+
+            # Build ffplay command for audio only
+            ffplay_cmd = [
+                'ffplay',
+                '-vn',  # Don't play video (we'll handle display)
+                '-nodisp',  # Don't display ffplay window
+                '-autoexit',
+                '-volume', str(self.audio_volume),
+                '-i', str(video_path),
+                '-ao', f'alsa:{alsa_device}'
+            ]
+
+            # Start ffplay for audio in background
+            ffplay_process = subprocess.Popen(
+                ffplay_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
+
+            # Play video with hardware acceleration
+            result = self._display_video_hw_accel(video_path)
+
+            # Clean up ffplay process
+            self._cleanup_process(ffplay_process, timeout=2.0)
+
+            return result
+
+        except FileNotFoundError:
+            logger.warning("ffplay not found. Install ffmpeg for audio support.")
+            return self._display_video_hw_accel(video_path)
+        except Exception as e:
+            logger.error(f"Error playing video with audio: {e}")
+            return self._display_video_hw_accel(video_path)
 
     @contextmanager
     def _video_capture(self, video_path: Path):
@@ -1287,11 +1572,16 @@ class SlideshowDisplay:
                     # Convert BGR to RGB
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                    # Create pygame surface
-                    frame_surface = pg.image.frombuffer(
+                    # Create pygame surface (use pool to reduce memory allocation)
+                    frame_surface = self._get_surface_from_pool(display_width, display_height)
+                    if frame_surface is None:
+                        frame_surface = pg.Surface((display_width, display_height))
+                    
+                    pg.image.frombuffer(
                         frame_rgb.tobytes(),
                         (display_width, display_height),
-                        'RGB'
+                        'RGB',
+                        frame_surface
                     )
 
                     # Display frame
@@ -1317,10 +1607,14 @@ class SlideshowDisplay:
 
                     current_frame_idx += 1
 
-                    # Maintain frame rate timing
+                    # Maintain frame rate timing (ensure minimum delay)
                     elapsed = (time.time() - frame_start_time) * 1000
-                    wait_time = max(1, frame_delay - int(elapsed))
-                    time.sleep(wait_time / 1000.0)
+                    wait_time = frame_delay - int(elapsed)
+                    if wait_time > 0:
+                        time.sleep(wait_time / 1000.0)
+                    else:
+                        # If we're behind, yield to prevent CPU spinning
+                        time.sleep(0.001)
                     frame_start_time = time.time()
 
                 logger.info(f"Video playback finished: {video_path.name}")
@@ -1329,6 +1623,31 @@ class SlideshowDisplay:
         except Exception as e:
             logger.error(f"Error displaying video {video_path}: {e}")
             return False
+
+    @staticmethod
+    def _cleanup_process(process, timeout: float = 2.0):
+        """Safely cleanup a subprocess, preventing zombie processes"""
+        if process is None:
+            return
+        try:
+            # Check if process is still running
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=1.0)
+        except (ProcessLookupError, OSError):
+            pass  # Process already gone
+        finally:
+            # Ensure pipes are closed to prevent file descriptor leaks
+            for pipe in [process.stdout, process.stderr, process.stdin]:
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except (OSError, ValueError):
+                        pass
 
     def _apply_rotation_to_screen(self):
         """Apply software rotation to virtual screen and display on physical screen"""
@@ -1417,6 +1736,66 @@ class SlideshowDisplay:
             file_info_pos, system_info_pos, progress_pos,
             file_texts, sys_texts, progress_text, text_spacing=15
         )
+
+    def _should_restart(self) -> bool:
+        """Check if weekly auto-restart should be triggered.
+        Uses schedule.start as the restart time (e.g., if display starts at 07:00, restart at 07:00).
+        """
+        if not self.weekly_auto_restart:
+            return False
+
+        now = datetime.datetime.now()
+
+        # Check if today is the restart day
+        if now.weekday() != self.weekly_restart_day:
+            return False
+
+        # Use schedule.start as restart time
+        restart_time_str = self.schedule_start
+        try:
+            restart_hour, restart_min = map(int, restart_time_str.split(':'))
+        except (ValueError, AttributeError):
+            restart_hour, restart_min = 7, 0  # Default: 7:00 AM (same as schedule default)
+
+        # Create today's restart datetime
+        restart_datetime = now.replace(hour=restart_hour, minute=restart_min,
+                                        second=0, microsecond=0)
+
+        # Check if we've passed the restart time
+        if now < restart_datetime:
+            return False  # Haven't reached restart time yet
+
+        # Only restart within 1 hour window after restart time
+        # This prevents immediate restart if program starts after the scheduled time
+        if now - restart_datetime > datetime.timedelta(hours=1):
+            return False  # Missed the restart window, wait until next week
+
+        # Check if we already restarted today (prevent multiple restarts)
+        restart_marker = Path("/tmp/gscreen_restarted_today")
+        if restart_marker.exists():
+            try:
+                if restart_marker.read_text().strip() == now.date().isoformat():
+                    return False  # Already restarted today
+            except:
+                pass  # Marker file corrupted, proceed with restart
+
+        return True
+
+    def _do_restart(self):
+        """Perform system restart"""
+        import subprocess
+
+        # Create marker file with today's date to prevent multiple restarts
+        restart_marker = Path("/tmp/gscreen_restarted_today")
+        restart_marker.write_text(datetime.datetime.now().date().isoformat())
+
+        logger.info(f"Executing weekly auto-restart at {datetime.datetime.now()}")
+        try:
+            # Use systemctl for clean reboot
+            subprocess.run(['sudo', 'systemctl', 'reboot'], check=False, timeout=10)
+        except Exception as e:
+            logger.error(f"Failed to restart: {e}")
+
     def _signal_handler(self, signum, frame):
         """Handle signals for clean shutdown"""
         logger.info("Received signal, shutting down...")
@@ -1568,9 +1947,26 @@ class SlideshowDisplay:
                         self.current_image_index = 0
                     last_sync = current_time
 
-                # Display error message if any
-                if self.error_message and time.time() - self.error_message_time < 30:
-                    self._show_error_message(self.error_message)
+                # Display error message if any (with auto-clear)
+                if self.error_message:
+                    if time.time() - self.error_message_time < 30:
+                        self._show_error_message(self.error_message)
+                    else:
+                        # Auto-clear expired error message
+                        self._clear_error_message()
+
+                # Periodic cleanup to prevent memory leaks
+                self._periodic_cleanup()
+                
+                # Periodic memory logging (every 10 minutes)
+                if self._frame_count % 12000 == 0:  # ~10 minutes at 20fps
+                    self._log_memory_usage()
+
+                # Check for weekly auto-restart
+                if self.weekly_auto_restart and self._should_restart():
+                    logger.info("Weekly auto-restart triggered. Restarting system...")
+                    self._do_restart()
+                    return  # Exit cleanly
 
                 # Small sleep to prevent high CPU usage
                 time.sleep(0.05)
