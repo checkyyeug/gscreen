@@ -14,7 +14,6 @@ import sys
 import signal
 import subprocess
 import datetime
-import re
 import gc
 import threading
 import queue
@@ -142,11 +141,15 @@ class SlideshowDisplay:
         self.error_message_time = None  # When error message was set
 
         # Image cache to avoid repeated loading/scaling
-        self._image_cache = {}  # {(path, width, height, scale_mode): surface}
+        self._image_cache = {}  # {(path, width, height, scale_mode): (surface, bytesize)}
         self._max_cache_size = 50  # Maximum number of cached images
         self._max_cache_memory_mb = 100  # Maximum cache memory in MB
         self._cache_access_order = []  # Track access order for LRU eviction
         self._cache_lock = threading.Lock()  # Thread-safe cache access
+
+        # Thread-safe locks for shared state
+        self._state_lock = threading.Lock()  # For error_message, _last_sync_time
+        self._gc_lock = threading.Lock()  # For _last_gc_time
 
         # Current image info
         self.current_image_path = None
@@ -905,7 +908,12 @@ class SlideshowDisplay:
     MAX_MEDIA_FILES = 2000
 
     def load_images(self, cache_dir: str) -> list[Path]:
-        """Load all images from cache directory with limit to prevent memory issues"""
+        """
+        Load all images from cache directory with limit to prevent memory issues
+
+        Uses os.scandir() for better performance than Path.iterdir(),
+        especially when there are many files.
+        """
         cache_path = Path(cache_dir)
         if not cache_path.exists():
             logger.warning(f"Cache directory not found: {cache_dir}")
@@ -914,13 +922,17 @@ class SlideshowDisplay:
         supported = set(ext.lower() for ext in self.settings.get('supported_formats', []))
         images = []
 
-        for file in cache_path.iterdir():
-            if file.is_file() and file.suffix.lower() in supported:
-                images.append(file)
-                # Prevent unbounded growth
-                if len(images) >= self.MAX_MEDIA_FILES:
-                    logger.warning(f"Reached maximum media file limit ({self.MAX_MEDIA_FILES}), skipping remaining files")
-                    break
+        # Use os.scandir() for better performance (fewer stat calls)
+        with os.scandir(str(cache_path)) as it:
+            for entry in it:
+                if entry.is_file():
+                    suffix = Path(entry.name).suffix.lower()
+                    if suffix in supported:
+                        images.append(cache_path / entry.name)
+                        # Prevent unbounded growth
+                        if len(images) >= self.MAX_MEDIA_FILES:
+                            logger.warning(f"Reached maximum media file limit ({self.MAX_MEDIA_FILES}), skipping remaining files")
+                            break
 
         logger.info(f"Loaded {len(images)} images from {cache_dir}")
         return sorted(images)
@@ -987,16 +999,23 @@ class SlideshowDisplay:
         return (str(image_path), width, height, self.scale_mode)
 
     def _cache_image(self, image_path: Path, width: int, height: int, surface):
-        """Cache an image surface with LRU eviction and memory limit"""
-        key = self._get_cache_key(image_path, width, height)
-        
-        with self._cache_lock:
-            # Calculate memory usage (RGB surface = width * height * 3 bytes)
-            surface_memory_mb = (width * height * 3) / (1024 * 1024)
+        """
+        Cache an image surface with LRU eviction and memory limit
 
-            # Calculate current cache memory usage
+        Stores (surface, bytesize) tuple to track actual memory usage
+        using surface.get_bytesize() for accurate calculation.
+        """
+        key = self._get_cache_key(image_path, width, height)
+
+        with self._cache_lock:
+            # Get actual bytes per pixel from the surface
+            bytes_per_pixel = surface.get_bytesize()
+            surface_memory_mb = (width * height * bytes_per_pixel) / (1024 * 1024)
+
+            # Calculate current cache memory usage using stored bytesizes
             current_memory_mb = sum(
-                (k[1] * k[2] * 3) / (1024 * 1024) for k in self._image_cache.keys()
+                (k[1] * k[2] * v[1]) / (1024 * 1024)
+                for k, v in self._image_cache.items()
             )
 
             # Evict oldest entries until we have room (memory-based eviction)
@@ -1005,12 +1024,14 @@ class SlideshowDisplay:
                     current_memory_mb + surface_memory_mb > self._max_cache_memory_mb)):
                 oldest_key = self._cache_access_order.pop(0)
                 if oldest_key in self._image_cache:
-                    # Subtract evicted item's memory from total (more efficient than recalc)
+                    # Subtract evicted item's memory using its stored bytesize
                     _, old_w, old_h, _ = oldest_key
-                    current_memory_mb -= (old_w * old_h * 3) / (1024 * 1024)
+                    old_bytesize = self._image_cache[oldest_key][1]
+                    current_memory_mb -= (old_w * old_h * old_bytesize) / (1024 * 1024)
                     del self._image_cache[oldest_key]
 
-            self._image_cache[key] = surface
+            # Store (surface, bytesize) tuple
+            self._image_cache[key] = (surface, bytes_per_pixel)
             self._cache_access_order.append(key)
     
     def _get_cached_image(self, image_path: Path, width: int, height: int):
@@ -1022,7 +1043,8 @@ class SlideshowDisplay:
                 if key in self._cache_access_order:
                     self._cache_access_order.remove(key)
                 self._cache_access_order.append(key)
-                return self._image_cache[key]
+                # Return just the surface from the (surface, bytesize) tuple
+                return self._image_cache[key][0]
             return None
 
     def _get_surface_from_pool(self, width: int, height: int) -> Optional['pg.Surface']:
@@ -1056,13 +1078,14 @@ class SlideshowDisplay:
         self._frame_count += 1
 
         # Full GC every 5 minutes
-        if current_time - self._last_gc_time >= self._gc_interval:
-            gc.collect()
-            self._last_gc_time = current_time
-            # Clean up surface pool periodically
-            with self._surface_pool_lock:
-                self._surface_pool.clear()
-            logger.debug("Ran periodic garbage collection and cleared surface pool")
+        with self._gc_lock:
+            if current_time - self._last_gc_time >= self._gc_interval:
+                gc.collect()
+                self._last_gc_time = current_time
+                # Clean up surface pool periodically
+                with self._surface_pool_lock:
+                    self._surface_pool.clear()
+                logger.debug("Ran periodic garbage collection and cleared surface pool")
 
         # Light cleanup every 100 frames (approx every 5 seconds at 20fps)
         elif self._frame_count % 100 == 0:
@@ -1836,31 +1859,35 @@ class SlideshowDisplay:
         """
         Check if it's time to sync and perform sync if needed.
         Returns True if sync was performed.
+        Thread-safe: uses _state_lock to protect _last_sync_time.
         """
         current_time = time.time()
-        elapsed = current_time - self._last_sync_time
+        with self._state_lock:
+            elapsed = current_time - self._last_sync_time
         # Log every 30 seconds to show we're alive
         if int(elapsed) % 30 == 0:
             logger.info(f"Sync check: elapsed={elapsed:.1f}s, interval={self.sync_interval}s")
         if not force and elapsed < self.sync_interval:
             return False
-        
+
         logger.info("Checking for new images...")
-        
+
         # Lazy init sync instance
         if self._sync_instance is None:
             from gdrive_sync import GoogleDriveSync
             self._sync_instance = GoogleDriveSync(self.settings_path)
-        
+
         try:
             self._sync_instance.sync()
         except Exception as e:
             logger.error(f"Sync failed: {e}", exc_info=True)
             self._show_error_message(f"同步失败: {str(e)}")
-        
+
         if hasattr(self, 'cache_dir'):
             self.images = self.load_images(self.cache_dir)
-            self.last_sync_time = datetime.datetime.now()
+            with self._state_lock:
+                self.last_sync_time = datetime.datetime.now()
+                self._last_sync_time = time.time()
             # Reset index if out of bounds
             if self.current_image_index >= len(self.images):
                 self.current_image_index = 0
@@ -2003,12 +2030,13 @@ class SlideshowDisplay:
                 self._check_and_sync()
 
                 # Display error message if any (with auto-clear)
-                if self.error_message:
-                    if time.time() - self.error_message_time < 30:
-                        self._show_error_message(self.error_message)
-                    else:
-                        # Auto-clear expired error message
-                        self._clear_error_message()
+                with self._state_lock:
+                    if self.error_message:
+                        if time.time() - self.error_message_time < 30:
+                            self._show_error_message(self.error_message)
+                        else:
+                            # Auto-clear expired error message
+                            self._clear_error_message()
 
                 # Periodic cleanup to prevent memory leaks
                 self._periodic_cleanup()
@@ -2259,9 +2287,10 @@ class SlideshowDisplay:
         """Display error message in red on screen"""
         pg = get_pygame()
 
-        # Store error message to display periodically
-        self.error_message = message
-        self.error_message_time = time.time()
+        # Store error message to display periodically (thread-safe)
+        with self._state_lock:
+            self.error_message = message
+            self.error_message_time = time.time()
 
         # Create fonts for error display
         try:
@@ -2295,8 +2324,9 @@ class SlideshowDisplay:
         pg.display.flip()
 
     def _clear_error_message(self):
-        """Clear stored error message"""
-        self.error_message = None
+        """Clear stored error message (thread-safe)"""
+        with self._state_lock:
+            self.error_message = None
 
 
 def main():

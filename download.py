@@ -115,10 +115,33 @@ def download_with_gdown(folder_url: str, output_dir: str) -> bool:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=30)
 )
-def download_file_requests(url: str, dest_path: Path) -> bool:
-    """Download a single file using requests with retry"""
+def download_file_requests(url: str, dest_path: Path, max_size_mb: int = 500) -> bool:
+    """
+    Download a single file using requests with retry
+
+    Args:
+        url: URL to download from
+        dest_path: Destination path
+        max_size_mb: Maximum file size in MB (default: 500)
+
+    Raises:
+        ValueError: If file size exceeds max_size_mb
+    """
     # Handle Google Drive's warning page for large files
     session = requests.Session()
+
+    # Check file size first with HEAD request
+    try:
+        head_response = session.head(url, timeout=10, allow_redirects=True)
+        content_length = head_response.headers.get('Content-Length')
+        if content_length:
+            size_mb = int(content_length) / (1024 * 1024)
+            if size_mb > max_size_mb:
+                logger.warning(f"File too large: {size_mb:.1f}MB (max: {max_size_mb}MB): {dest_path.name}")
+                raise ValueError(f"File too large: {size_mb:.1f}MB")
+    except requests.RequestException:
+        pass  # Proceed with download if HEAD fails
+
     response = session.get(url, stream=True, timeout=60)
     response.raise_for_status()
 
@@ -135,10 +158,15 @@ def download_file_requests(url: str, dest_path: Path) -> bool:
 
     # Use atomic write: download to .tmp first, then rename
     temp_dest = dest_path.with_suffix(dest_path.suffix + '.tmp')
+    downloaded_bytes = 0
     try:
         with open(temp_dest, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
+                    downloaded_bytes += len(chunk)
+                    # Check size during download
+                    if downloaded_bytes > max_size_mb * 1024 * 1024:
+                        raise ValueError(f"File size exceeded {max_size_mb}MB limit")
                     f.write(chunk)
         # Atomic rename to final destination
         temp_dest.replace(dest_path)

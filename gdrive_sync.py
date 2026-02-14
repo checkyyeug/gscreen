@@ -101,24 +101,50 @@ class GoogleDriveSync:
         wait=wait_exponential(multiplier=1, min=2, max=30),
         retry=retry_if_exception_type(requests.exceptions.RequestException)
     )
-    def download_file(self, direct_url: str, destination: Path) -> bool:
+    def download_file(self, direct_url: str, destination: Path, max_size_mb: int = 500) -> bool:
         """
         Download a file from URL to destination with retry logic
 
         Uses atomic write pattern: download to .tmp file first, then rename.
         This prevents corrupted files if the process crashes mid-download.
+
+        Args:
+            direct_url: URL to download from
+            destination: Path to save the file
+            max_size_mb: Maximum file size in MB (default: 500)
+
+        Raises:
+            ValueError: If file size exceeds max_size_mb
         """
+        # Use HEAD request first to check file size
+        try:
+            head_response = requests.head(direct_url, timeout=10, allow_redirects=True)
+            content_length = head_response.headers.get('Content-Length')
+            if content_length:
+                size_mb = int(content_length) / (1024 * 1024)
+                if size_mb > max_size_mb:
+                    logger.warning(f"File too large: {size_mb:.1f}MB (max: {max_size_mb}MB): {destination.name}")
+                    raise ValueError(f"File too large: {size_mb:.1f}MB")
+        except requests.RequestException:
+            # If HEAD fails, proceed with download and check during transfer
+            pass
+
         response = requests.get(direct_url, stream=True, timeout=30)
         response.raise_for_status()
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         temp_dest = destination.with_suffix(destination.suffix + '.tmp')
 
+        downloaded_bytes = 0
         try:
             with open(temp_dest, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
+                        downloaded_bytes += len(chunk)
+                        # Check size during download
+                        if downloaded_bytes > max_size_mb * 1024 * 1024:
+                            raise ValueError(f"File size exceeded {max_size_mb}MB limit")
             # Atomic rename to final destination
             temp_dest.replace(destination)
             return True
