@@ -106,6 +106,11 @@ class SlideshowDisplay:
         self.statusbar_text_color = (200, 200, 200)
         self.statusbar_font_size = 14
 
+        # Sync settings
+        self.sync_interval = self.settings['sync']['check_interval_minutes'] * 60
+        self._last_sync_time = time.time()
+        self._sync_instance = None
+
         # Runtime state
         self.running = False
         self.current_image_index = 0
@@ -1222,6 +1227,10 @@ class SlideshowDisplay:
         video_height = self.virt_height
 
         # Calculate display dimensions based on scale mode
+        # Track actual output dimensions from ffmpeg
+        output_width = video_width
+        output_height = video_height
+
         if self.scale_mode == 'fit':
             # Get original video dimensions first
             temp_cap = cv2.VideoCapture(str(video_path))
@@ -1233,6 +1242,8 @@ class SlideshowDisplay:
                         orig_w, orig_h, video_width, video_height
                     )
                     scale_filter = f'scale={new_width}:{new_height}'
+                    output_width = new_width
+                    output_height = new_height
                     x_offset = (video_width - new_width) // 2
                     y_offset = (video_height - new_height) // 2
                 else:
@@ -1268,8 +1279,6 @@ class SlideshowDisplay:
             'pipe:1'
         ])
 
-        logger.info(f"Playing video with HW acceleration ({self.hw_accel_method}): {video_path.name}")
-
         try:
             # Start ffmpeg process
             process = subprocess.Popen(
@@ -1279,8 +1288,8 @@ class SlideshowDisplay:
                 stdin=subprocess.DEVNULL
             )
 
-            # Calculate frame size
-            frame_size = video_width * video_height * 3  # RGB24 = 3 bytes per pixel
+            # Calculate frame size (use actual output dimensions)
+            frame_size = output_width * output_height * 3  # RGB24 = 3 bytes per pixel
 
             start_time = time.time()
             fps = 30  # Default FPS estimation
@@ -1337,10 +1346,16 @@ class SlideshowDisplay:
                     if frame_data is None:
                         break  # End of stream
                 except queue.Empty:
+                    # Check for sync even when queue is empty
+                    self._check_and_sync()
                     continue
+                
+                # Periodic sync check during video playback (throttled internally)
+                self._check_and_sync()
 
                 # Create pygame surface from frame data
-                frame_surface = pg.image.frombuffer(frame_data, (video_width, video_height), 'RGB')
+                # Use actual ffmpeg output dimensions (may differ from video_width/height for 'fit' mode)
+                frame_surface = pg.image.frombuffer(frame_data, (output_width, output_height), 'RGB')
 
                 # Display frame
                 target_screen.fill(self.bg_color)
@@ -1361,6 +1376,9 @@ class SlideshowDisplay:
                         0, 0  # Frame info not available with ffmpeg
                     )
                     last_statusbar_update = current_time
+
+                # Periodic sync check during video playback (every frame, throttled internally)
+                self._check_and_sync()
 
                 # Apply software rotation if needed
                 if self.rotation_mode == 'software' and self.rotation in [90, 180, 270]:
@@ -1545,16 +1563,11 @@ class SlideshowDisplay:
                     # Convert BGR to RGB
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                    # Create pygame surface (use pool to reduce memory allocation)
-                    frame_surface = self._get_surface_from_pool(display_width, display_height)
-                    if frame_surface is None:
-                        frame_surface = pg.Surface((display_width, display_height))
-
-                    pg.image.frombuffer(
+                    # Create pygame surface from frame data
+                    frame_surface = pg.image.frombuffer(
                         frame_rgb.tobytes(),
                         (display_width, display_height),
-                        'RGB',
-                        frame_surface
+                        'RGB'
                     )
 
                     # Display frame
@@ -1582,6 +1595,9 @@ class SlideshowDisplay:
 
                     # Return surface to pool for reuse (prevents memory leak)
                     self._return_surface_to_pool(frame_surface)
+                    
+                    # Periodic sync check during video playback (throttled internally)
+                    self._check_and_sync()
 
                     # Maintain frame rate timing (ensure minimum delay)
                     elapsed = (time.time() - frame_start_time) * 1000
@@ -1777,9 +1793,46 @@ class SlideshowDisplay:
         logger.info("Received signal, shutting down...")
         self.running = False
 
+    def _check_and_sync(self, force: bool = False) -> bool:
+        """
+        Check if it's time to sync and perform sync if needed.
+        Returns True if sync was performed.
+        """
+        current_time = time.time()
+        elapsed = current_time - self._last_sync_time
+        # Log every 30 seconds to show we're alive
+        if int(elapsed) % 30 == 0:
+            logger.info(f"Sync check: elapsed={elapsed:.1f}s, interval={self.sync_interval}s")
+        if not force and elapsed < self.sync_interval:
+            return False
+        
+        logger.info("Checking for new images...")
+        
+        # Lazy init sync instance
+        if self._sync_instance is None:
+            from gdrive_sync import GoogleDriveSync
+            self._sync_instance = GoogleDriveSync(self.settings_path)
+        
+        try:
+            self._sync_instance.sync()
+        except Exception as e:
+            logger.error(f"Sync failed: {e}", exc_info=True)
+            self._show_error_message(f"同步失败: {str(e)}")
+        
+        if hasattr(self, 'cache_dir'):
+            self.images = self.load_images(self.cache_dir)
+            self.last_sync_time = datetime.datetime.now()
+            # Reset index if out of bounds
+            if self.current_image_index >= len(self.images):
+                self.current_image_index = 0
+        
+        self._last_sync_time = current_time
+        return True
+
     def run(self, cache_dir: str):
         """Main slideshow loop"""
         pg = get_pygame()
+        self.cache_dir = cache_dir  # Save for sync usage
         # Setup signal handlers for clean shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -1810,7 +1863,7 @@ class SlideshowDisplay:
         self.running = True
         # Set last_change to 0 to trigger immediate display of first media
         last_change = 0
-        last_sync = time.time()
+        self._last_sync_time = time.time()
         last_statusbar_update = time.time()
 
         # Count videos vs images
@@ -1907,21 +1960,8 @@ class SlideshowDisplay:
                         last_change = current_time
                         last_statusbar_update = current_time  # Reset statusbar timer
 
-                # Periodic sync check (every minute)
-                sync_interval = self.settings['sync']['check_interval_minutes'] * 60
-                if current_time - last_sync >= sync_interval:
-                    logger.info("Checking for new images...")
-                    try:
-                        sync.sync()
-                    except Exception as e:
-                        logger.error(f"Sync failed: {e}", exc_info=True)
-                        self._show_error_message(f"同步失败: {str(e)}")
-                    self.images = self.load_images(cache_dir)
-                    self.last_sync_time = datetime.datetime.now()
-                    # Reset index if out of bounds
-                    if self.current_image_index >= len(self.images):
-                        self.current_image_index = 0
-                    last_sync = current_time
+                # Periodic sync check
+                self._check_and_sync()
 
                 # Display error message if any (with auto-clear)
                 if self.error_message:

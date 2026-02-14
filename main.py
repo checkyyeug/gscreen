@@ -76,8 +76,10 @@ def check_dependencies():
 
     # Check pygame-ce using pip list (don't import pygame to avoid early SDL init)
     import subprocess
+    import sys
     try:
-        result = subprocess.run(['pip', 'list'], capture_output=True, text=True, timeout=5)
+        # Use the pip from the current Python interpreter (works with venv)
+        result = subprocess.run([sys.executable, '-m', 'pip', 'list'], capture_output=True, text=True, timeout=5)
         if 'pygame-ce' not in result.stdout.lower():
             missing.append('pygame-ce')
     except Exception:
