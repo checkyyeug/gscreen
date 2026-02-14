@@ -8,6 +8,7 @@ With status bar showing file info, system info, etc.
 
 import os
 import json
+from functools import lru_cache
 import logging
 import time
 import sys
@@ -165,6 +166,7 @@ class SlideshowDisplay:
         # Current image info
         self.current_image_path = None
         self.current_image_info = {}
+        self._file_info_cache: Dict[str, dict] = {}
 
         # Memory management: periodic garbage collection
         self._last_gc_time = time.time()
@@ -401,8 +403,9 @@ class SlideshowDisplay:
         mod_time = datetime.datetime.fromtimestamp(mtime)
         return mod_time.strftime("%Y-%m-%d %H:%M")
 
+    @lru_cache(maxsize=128)  # Cache up to 128 most recent file info results
     def _get_file_info(self, image_path: Path) -> dict:
-        """Get file information"""
+        """Get file information (with caching to avoid repeated stat() calls)"""
         info = {
             'name': image_path.name,
             'size': '',
