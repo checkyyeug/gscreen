@@ -283,6 +283,15 @@ def validate_settings(settings: Dict[str, Any]) -> None:
                 'dev_video_glob': '/dev/video*'
             }
 
+    # Validate timeouts section
+    if 'system' in settings and 'timeouts' in settings['system']:
+        try:
+            settings['system']['timeouts'] = validate_timeouts(
+                settings['system']['timeouts'], 'system.timeouts'
+            )
+        except ValidationError as e:
+            errors.append(str(e))
+
     # Validate google_drive_url
     if 'google_drive_url' in settings:
         try:
@@ -325,3 +334,86 @@ def get_system_paths(settings: Dict[str, Any]) -> Dict[str, str]:
         return paths
 
     return default_paths.copy()
+
+
+def validate_timeouts(value: Any, field_name: str) -> Dict[str, Any]:
+    """Validate timeouts configuration section"""
+    if not isinstance(value, dict):
+        raise ValidationError(field_name, "Must be a dictionary")
+
+    errors = []
+    validated = {}
+
+    # Validate network timeouts
+    if 'network' in value:
+        network = value['network']
+        for key in ['download', 'list', 'head', 'default']:
+            if key in network:
+                timeout_val = network[key]
+                if not isinstance(timeout_val, (int, float)):
+                    errors.append(f"system.timeouts.network.{key} must be a number")
+                elif timeout_val < 1:
+                    errors.append(f"system.timeouts.network.{key} must be at least 1 second")
+                elif timeout_val > 3600:
+                    errors.append(f"system.timeouts.network.{key} must be at most 3600 seconds (1 hour)")
+                else:
+                    validated.setdefault('network', {})
+                    validated['network'][key] = int(timeout_val)
+
+    # Validate subprocess timeouts
+    if 'subprocess' in value:
+        subprocess = value['subprocess']
+        for key in ['quick', 'normal', 'long', 'reboot']:
+            if key in subprocess:
+                timeout_val = subprocess[key]
+                if not isinstance(timeout_val, (int, float)):
+                    errors.append(f"system.timeouts.subprocess.{key} must be a number")
+                elif timeout_val < 1:
+                    errors.append(f"system.timeouts.subprocess.{key} must be at least 1 second")
+                elif timeout_val > 600:
+                    errors.append(f"system.timeouts.subprocess.{key} must be at most 600 seconds (10 minutes)")
+                else:
+                    validated.setdefault('subprocess', {})
+                    validated['subprocess'][key] = int(timeout_val)
+
+    if errors:
+        for error in errors:
+            raise ValidationError(field_name, error)
+
+    return validated
+
+
+def get_timeouts(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get timeout values from settings with defaults.
+
+    Returns a dict with 'network' and 'subprocess' sections.
+    """
+    default_timeouts = {
+        'network': {
+            'download': 300,
+            'list': 60,
+            'head': 10,
+            'default': 30
+        },
+        'subprocess': {
+            'quick': 1,
+            'normal': 2,
+            'long': 10,
+            'reboot': 10
+        }
+    }
+
+    # Get timeouts from settings or use defaults
+    if 'system' in settings and 'timeouts' in settings['system']:
+        timeouts = settings['system']['timeouts']
+        # Apply defaults for missing keys
+        for section, defaults in default_timeouts.items():
+            if section not in timeouts:
+                timeouts[section] = {}
+            for key, default_value in defaults.items():
+                if key not in timeouts[section]:
+                    timeouts[section][key] = default_value
+        return timeouts
+
+    return default_timeouts.copy()

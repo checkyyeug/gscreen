@@ -92,6 +92,16 @@ class SlideshowDisplay:
         self.system_settings = self.settings.get('system', {})
         self.weekly_auto_restart = self.system_settings.get('weekly_auto_restart', True)  # Default: enabled
 
+        # Timeout settings (with defaults)
+        self.timeouts = {
+            'network': self.system_settings.get('timeouts', {}).get('network', {
+                'download': 300, 'list': 60, 'head': 10, 'default': 30
+            }),
+            'subprocess': self.system_settings.get('timeouts', {}).get('subprocess', {
+                'quick': 1, 'normal': 2, 'long': 10, 'reboot': 10
+            })
+        }
+
         # Parse weekly_restart_day: support both string ("Mon"..."Sun") and integer (0=Sun, 1=Mon) for backward compatibility
         restart_day_config = self.system_settings.get('weekly_restart_day', 'Sun')
         self.weekly_restart_day = self._parse_restart_day(restart_day_config)
@@ -215,7 +225,7 @@ class SlideshowDisplay:
                 ['ffmpeg', '-hwaccels'],
                 capture_output=True,
                 text=True,
-                timeout=2
+                timeout=self.timeouts['subprocess']['normal']
             )
             hwaccels = result.stdout
 
@@ -285,7 +295,8 @@ class SlideshowDisplay:
 
         # Try iwconfig first (more reliable)
         try:
-            result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=1)
+            result = subprocess.run(['iwconfig'], capture_output=True, text=True,
+                                 timeout=self.timeouts['subprocess']['quick'])
             if 'Signal level' in result.stdout:
                 match = re.search(r'Signal level=(-?\d+) dBm', result.stdout)
                 if match:
@@ -1277,7 +1288,7 @@ class SlideshowDisplay:
             result = self._display_video_opencv(video_path, skip_audio_check=True)
 
             # Clean up ffplay process
-            self._cleanup_process(ffplay_process, timeout=2.0)
+            self._cleanup_process(ffplay_process, timeout=self.timeouts['subprocess']['normal'])
 
             return result
 
@@ -1381,7 +1392,7 @@ class SlideshowDisplay:
                         if len(frame_data) < frame_size:
                             break
                         try:
-                            frame_queue.put(frame_data, timeout=1.0)
+                            frame_queue.put(frame_data, timeout=self.timeouts['subprocess']['quick'])
                         except queue.Full:
                             pass  # Skip frame if queue is full
                 except Exception as e:
@@ -1465,9 +1476,9 @@ class SlideshowDisplay:
 
             # Cleanup
             stop_event.set()
-            reader_thread.join(timeout=1.0)
+            reader_thread.join(timeout=self.timeouts['subprocess']['quick'])
 
-            self._cleanup_process(process, timeout=2.0)
+            self._cleanup_process(process, timeout=self.timeouts['subprocess']['normal'])
 
             logger.info(f"Video playback finished: {video_path.name}")
             return True
@@ -1518,7 +1529,7 @@ class SlideshowDisplay:
             result = self._display_video_hw_accel(video_path)
 
             # Clean up ffplay process
-            self._cleanup_process(ffplay_process, timeout=2.0)
+            self._cleanup_process(ffplay_process, timeout=self.timeouts['subprocess']['normal'])
 
             return result
 
@@ -1703,7 +1714,7 @@ class SlideshowDisplay:
                     process.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=1.0)
+                    process.wait(timeout=self.timeouts['subprocess']['quick'])
         except (ProcessLookupError, OSError):
             pass  # Process already gone
         finally:
@@ -1846,7 +1857,7 @@ class SlideshowDisplay:
         logger.info(f"Executing weekly auto-restart at {datetime.datetime.now()}")
         try:
             # Use systemctl for clean reboot
-            subprocess.run(['sudo', 'systemctl', 'reboot'], check=False, timeout=10)
+            subprocess.run(['sudo', 'systemctl', 'reboot'], check=False, timeout=self.timeouts['subprocess']['long'])
         except Exception as e:
             logger.error(f"Failed to restart: {e}")
 

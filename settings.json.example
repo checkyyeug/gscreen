@@ -63,6 +63,23 @@
             "sysfs_drm_path": "/sys/class/drm",
             "proc_net_wireless": "/proc/net/wireless",
             "dev_video_glob": "/dev/video*"
+        },
+        "timeouts": {
+            "_comment": "Timeout values in seconds",
+            "network": {
+                "_comment": "Network operation timeouts",
+                "download": 300,
+                "list": 60,
+                "head": 10,
+                "default": 30
+            },
+            "subprocess": {
+                "_comment": "Subprocess command timeouts",
+                "quick": 1,
+                "normal": 2,
+                "long": 10,
+                "reboot": 10
+            }
         }
     },
     "supported_formats": [

@@ -26,6 +26,52 @@ if sys.platform.startswith('linux'):
 logger = logging.getLogger(__name__)
 
 
+# Allowed commands for subprocess execution (security measure)
+ALLOWED_COMMANDS = {
+    'rclone', 'gdown', 'curl', 'wget', 'find', 'rm', 'cp', 'mv',
+    'ffmpeg', 'ffplay', 'cv2', 'python', 'python3', 'pip', 'pip3',
+    'systemctl', 'reboot', 'poweroff', 'ntpdate', 'timedatectl',
+    'iwconfig', 'lsusb', 'lsblk', 'df', 'free', 'uname'
+}
+
+
+def validate_subprocess_command(cmd_list: list) -> bool:
+    """
+    Validate subprocess command to prevent injection attacks.
+
+    Only allows commands in ALLOWED_COMMANDS and validates arguments
+    don't contain shell metacharacters that could enable injection.
+
+    Args:
+        cmd_list: List of command arguments (first element is the command)
+
+    Returns:
+        True if command is safe, raises ValueError otherwise
+    """
+    if not cmd_list:
+        raise ValueError("Empty command list")
+
+    cmd = cmd_list[0]
+    cmd_base = Path(cmd).name if '/' in cmd else cmd
+
+    if cmd_base not in ALLOWED_COMMANDS:
+        raise ValueError(f"Command not allowed: {cmd}")
+
+    # Check for shell metacharacters in arguments (could enable injection)
+    shell_chars = [';', '|', '&', '$(', ')', '`', '\n', '\r']
+    for arg in cmd_list[1:]:
+        if isinstance(arg, str):
+            for char in shell_chars:
+                if char in arg:
+                    raise ValueError(f"Shell metacharacter '{char}' in argument: {arg}")
+
+    return True
+
+
+logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
+
 class GoogleDriveSync:
     """Syncs files from a Google Drive shared folder"""
 
@@ -188,6 +234,41 @@ class GoogleDriveSync:
             logger.error(f"Failed to list drive files: {e}")
 
         return {}
+
+    def _compare_file_lists(self, local_files: Dict, drive_files: Dict) -> tuple:
+        """
+        Compare local and remote file lists to determine sync actions.
+
+        Args:
+            local_files: Dict of {filename: (size, mod_time)}
+            drive_files: Dict of {filename: size or None}
+
+        Returns:
+            Tuple of (files_to_add, files_to_update, files_to_delete)
+            - files_to_add: Files on Drive but not local
+            - files_to_update: Files on Drive with different size than local
+            - files_to_delete: Files locally but not on Drive
+        """
+        local_filenames = set(local_files.keys())
+        drive_filenames = set(drive_files.keys())
+
+        files_to_add = []
+        files_to_update = []
+        files_to_delete = []
+
+        # Check for new or updated files
+        for filename in drive_filenames:
+            drive_size = drive_files[filename]
+            if filename not in local_files:
+                files_to_add.append(filename)
+            elif drive_size is not None and local_files[filename][0] != drive_size:
+                files_to_update.append(filename)
+
+        # Check for deleted files
+        for filename in local_filenames - drive_filenames:
+            files_to_delete.append(filename)
+
+        return files_to_add, files_to_update, files_to_delete
 
     def sync(self) -> bool:
         """
