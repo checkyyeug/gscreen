@@ -227,12 +227,17 @@ def validate_settings(settings: Dict[str, Any]) -> None:
             elif not (-12 <= sync['timezone_offset'] <= 14):
                 errors.append("sync.timezone_offset must be -12 to +14")
 
-        # Validate check_interval_minutes
+        # Validate check_interval_minutes (stored in minutes, validated as 1-60 minutes)
         if 'check_interval_minutes' in sync:
             try:
-                sync['check_interval_minutes'] = validate_interval(
-                    sync['check_interval_minutes'] * 60, 'sync.check_interval_minutes'
-                )
+                minutes = sync['check_interval_minutes']
+                if not isinstance(minutes, (int, float)):
+                    raise ValidationError('sync.check_interval_minutes', "Must be a number")
+                if minutes < 1:
+                    raise ValidationError('sync.check_interval_minutes', "Must be at least 1 minute")
+                if minutes > 60:
+                    raise ValidationError('sync.check_interval_minutes', "Must be at most 60 minutes")
+                sync['check_interval_minutes'] = int(minutes)
             except ValidationError as e:
                 errors.append(str(e))
 
