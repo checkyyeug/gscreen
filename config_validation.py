@@ -146,6 +146,15 @@ def validate_settings(settings: Dict[str, Any]) -> None:
             if display['rotation_mode'] not in valid_modes:
                 errors.append(f"display.rotation_mode must be one of: {', '.join(valid_modes)}")
 
+        # Validate statusbar_height (if present)
+        if 'statusbar_height' in display:
+            try:
+                display['statusbar_height'] = validate_interval(
+                    display['statusbar_height'], 'display.statusbar_height'
+                )
+            except ValidationError as e:
+                errors.append(str(e))
+
         # Validate scale_mode (in slideshow)
         if 'scale_mode' in display:
             try:

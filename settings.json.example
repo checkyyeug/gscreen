@@ -4,7 +4,11 @@
         "hdmi_port": 1,
         "fullscreen": true,
         "borderless": true,
-        "background_color": [0, 0, 0],
+        "background_color": [
+            0,
+            0,
+            0
+        ],
         "hide_mouse": true,
         "show_statusbar": true,
         "rotation_mode": "software",
@@ -21,7 +25,8 @@
                 "progress_position": "top",
                 "file_info_position": "bottom"
             }
-        }
+        },
+        "statusbar_height": 30
     },
     "slideshow": {
         "interval_seconds": 5,
@@ -29,7 +34,15 @@
     },
     "schedule": {
         "enabled": false,
-        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+        ],
         "start": "07:00",
         "stop": "23:00"
     },
