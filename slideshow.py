@@ -179,6 +179,7 @@ class SlideshowDisplay:
         # Text surface pool for status bar (prevents repeated allocations)
         self._text_pool: List[pg.Surface] = []
         self._text_pool_max = 10  # More text surfaces needed for status bar
+        self._text_surface_pool_lock = threading.Lock()
 
         # WiFi signal cache (reduces subprocess calls)
         self._wifi_signal_cache = ("N/A", 0)
@@ -1910,8 +1911,9 @@ class SlideshowDisplay:
         Returns True if sync was performed.
         Thread-safe: uses _state_lock to protect _last_sync_time.
         """
-        current_time = time.time()
+        # Calculate time inside lock to avoid race condition
         with self._state_lock:
+            current_time = time.time()
             elapsed = current_time - self._last_sync_time
         # Log every 30 seconds to show we're alive
         if int(elapsed) % 30 == 0:
