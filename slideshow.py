@@ -14,6 +14,7 @@ import sys
 import signal
 import subprocess
 import datetime
+import re
 import gc
 import threading
 import queue
@@ -174,6 +175,10 @@ class SlideshowDisplay:
         self._surface_pool: List[pg.Surface] = []
         self._surface_pool_max = 3  # Keep only a few surfaces in pool
         self._surface_pool_lock = threading.Lock()
+
+        # Text surface pool for status bar (prevents repeated allocations)
+        self._text_pool: List[pg.Surface] = []
+        self._text_pool_max = 10  # More text surfaces needed for status bar
 
         # WiFi signal cache (reduces subprocess calls)
         self._wifi_signal_cache = ("N/A", 0)
@@ -614,7 +619,7 @@ class SlideshowDisplay:
             y_offset = 2
             x_offset = 10
             for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
+                text_surface = self._get_text_surface(text)
                 surface.blit(text_surface, (x_offset, y_offset))
                 x_offset += text_surface.get_width() + text_spacing
                 # Explicitly delete to help GC
@@ -625,7 +630,7 @@ class SlideshowDisplay:
             y_offset = 2
             x_offset = screen_width - 10
             for text in texts:
-                text_surface = self.font.render(text, True, self.statusbar_text_color)
+                text_surface = self._get_text_surface(text)
                 x_offset -= text_surface.get_width()
                 surface.blit(text_surface, (x_offset, y_offset))
                 x_offset -= text_spacing
@@ -1077,6 +1082,39 @@ class SlideshowDisplay:
                 # Pool is full, just let GC handle it
                 pass
 
+    def _get_text_surface_from_pool(self, width: int, height: int) -> Optional['pg.Surface']:
+        """Get a text surface from pool or create new one"""
+        with self._surface_pool_lock:
+            for i, surf in enumerate(self._surface_pool):
+                if surf.get_width() == width and surf.get_height() == height:
+                    return self._surface_pool.pop(i)
+        return None
+
+    def _get_text_surface(self, text: str) -> 'pg.Surface':
+        """Render text to a surface, using pool if possible"""
+        pg = get_pygame()
+        text_surface = self.font.render(text, True, self.statusbar_text_color)
+
+        # Try to get from text pool first
+        surf = self._get_text_surface_from_pool(text_surface.get_width(), text_surface.get_height())
+        if surf is not None:
+            surf.blit(text_surface, (0, 0))
+            return surf
+
+        # Create new surface and add to pool
+        if len(self._text_pool) < self._text_pool_max:
+            with self._surface_pool_lock:
+                self._text_pool.append(text_surface)
+
+        return text_surface
+
+    def _return_text_surface_to_pool(self, surf: 'pg.Surface'):
+        """Return text surface to pool for reuse"""
+        pg = get_pygame()
+        with self._surface_pool_lock:
+            if len(self._text_pool) < self._text_pool_max:
+                self._text_pool.append(surf)
+
     def _clear_image_cache(self):
         """Clear the image cache (call when settings change)"""
         with self._cache_lock:
@@ -1381,7 +1419,7 @@ class SlideshowDisplay:
             last_statusbar_update = start_time
 
             # Thread for reading frames from ffmpeg
-            frame_queue = queue.Queue(maxsize=5)  # Increased from 2 to prevent frame drops
+            frame_queue = queue.Queue(maxsize=2)  # Reduced to minimize memory (each frame ~6MB)
             stop_event = threading.Event()
 
             def frame_reader():
@@ -1408,7 +1446,7 @@ class SlideshowDisplay:
 
             while self.running:
                 # Handle events
-                for event in pg.event.get():
+                for event in pg.event.get(timeout=100):  # 100ms timeout to prevent blocking
                     if event.type == pg.QUIT:
                         self.running = False
                         break
@@ -1616,7 +1654,7 @@ class SlideshowDisplay:
 
                 while self.running:
                     # Handle events
-                    for event in pg.event.get():
+                    for event in pg.event.get(timeout=100):
                         if event.type == pg.QUIT:
                             self.running = False
                             return False
@@ -1972,7 +2010,7 @@ class SlideshowDisplay:
                     pg.mouse.set_visible(False)
 
                 # Handle events
-                for event in pg.event.get():
+                for event in pg.event.get(timeout=100):
                     if event.type == pg.QUIT:
                         self.running = False
                     elif event.type == pg.KEYDOWN:
@@ -2112,7 +2150,7 @@ class SlideshowDisplay:
         while waiting:
             try:
                 # Handle events
-                for event in pg.event.get():
+                for event in pg.event.get(timeout=100):
                     if event.type == pg.QUIT:
                         waiting = False
                     elif event.type == pg.KEYDOWN:
@@ -2219,7 +2257,7 @@ class SlideshowDisplay:
         while counting_down:
             try:
                 # Handle events - allow early exit with ESC
-                for event in pg.event.get():
+                for event in pg.event.get(timeout=100):
                     if event.type == pg.QUIT:
                         counting_down = False
                         self.running = False

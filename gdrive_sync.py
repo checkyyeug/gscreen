@@ -14,6 +14,7 @@ import requests
 from pathlib import Path
 from typing import Set, Dict
 import time
+import socket
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
