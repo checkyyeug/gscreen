@@ -133,13 +133,22 @@ def download_file_requests(url: str, dest_path: Path) -> bool:
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(dest_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
-
-    logger.info(f"Downloaded: {dest_path.name}")
-    return True
+    # Use atomic write: download to .tmp first, then rename
+    temp_dest = dest_path.with_suffix(dest_path.suffix + '.tmp')
+    try:
+        with open(temp_dest, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        # Atomic rename to final destination
+        temp_dest.replace(dest_path)
+        logger.info(f"Downloaded: {dest_path.name}")
+        return True
+    except Exception:
+        # Clean up temp file on failure
+        if temp_dest.exists():
+            temp_dest.unlink()
+        raise
 
 
 def main():

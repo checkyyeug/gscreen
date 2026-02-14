@@ -241,6 +241,48 @@ def validate_settings(settings: Dict[str, Any]) -> None:
             except ValidationError as e:
                 errors.append(str(e))
 
+    # Validate system settings
+    if 'system' in settings:
+        system = settings['system']
+
+        # Validate paths section
+        if 'paths' in system:
+            paths = system['paths']
+            default_paths = {
+                'framebuffer_device': '/dev/fb0',
+                'ram_log_dir': '/dev/shm/gscreen_logs',
+                'x11_socket_dir': '/tmp/.X11-unix',
+                'sysfs_graphics_path': '/sys/class/graphics',
+                'sysfs_drm_path': '/sys/class/drm',
+                'proc_net_wireless': '/proc/net/wireless',
+                'dev_video_glob': '/dev/video*'
+            }
+            # Ensure all paths are strings
+            for key, default_value in default_paths.items():
+                if key in paths:
+                    if not isinstance(paths[key], str):
+                        errors.append(f"system.paths.{key} must be a string")
+                    elif not paths[key]:
+                        errors.append(f"system.paths.{key} cannot be empty")
+                # Set defaults if not present
+                elif key not in paths:
+                    paths[key] = default_value
+            # Set defaults for any missing paths
+            for key, default_value in default_paths.items():
+                if key not in paths:
+                    paths[key] = default_value
+        else:
+            # Add default paths if not present
+            system['paths'] = {
+                'framebuffer_device': '/dev/fb0',
+                'ram_log_dir': '/dev/shm/gscreen_logs',
+                'x11_socket_dir': '/tmp/.X11-unix',
+                'sysfs_graphics_path': '/sys/class/graphics',
+                'sysfs_drm_path': '/sys/class/drm',
+                'proc_net_wireless': '/proc/net/wireless',
+                'dev_video_glob': '/dev/video*'
+            }
+
     # Validate google_drive_url
     if 'google_drive_url' in settings:
         try:
@@ -255,3 +297,31 @@ def validate_settings(settings: Dict[str, Any]) -> None:
         error_msg = "Configuration validation failed:\n  - " + "\n  - ".join(errors)
         logger.error(error_msg)
         raise ValidationError("settings", error_msg)
+
+
+def get_system_paths(settings: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Get system paths from settings with defaults.
+
+    Returns a dict of all system paths used by the application.
+    """
+    default_paths = {
+        'framebuffer_device': '/dev/fb0',
+        'ram_log_dir': '/dev/shm/gscreen_logs',
+        'x11_socket_dir': '/tmp/.X11-unix',
+        'sysfs_graphics_path': '/sys/class/graphics',
+        'sysfs_drm_path': '/sys/class/drm',
+        'proc_net_wireless': '/proc/net/wireless',
+        'dev_video_glob': '/dev/video*'
+    }
+
+    # Get paths from settings or use defaults
+    if 'system' in settings and 'paths' in settings['system']:
+        paths = settings['system']['paths']
+        # Apply defaults for missing keys
+        for key, default_value in default_paths.items():
+            if key not in paths:
+                paths[key] = default_value
+        return paths
+
+    return default_paths.copy()

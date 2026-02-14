@@ -53,7 +53,17 @@
         "log_to_ram": true,
         "ram_log_size_mb": 50,
         "enable_health_monitoring": true,
-        "health_check_interval_hours": 6
+        "health_check_interval_hours": 6,
+        "paths": {
+            "_comment": "System paths - rarely need to change these",
+            "framebuffer_device": "/dev/fb0",
+            "ram_log_dir": "/dev/shm/gscreen_logs",
+            "x11_socket_dir": "/tmp/.X11-unix",
+            "sysfs_graphics_path": "/sys/class/graphics",
+            "sysfs_drm_path": "/sys/class/drm",
+            "proc_net_wireless": "/proc/net/wireless",
+            "dev_video_glob": "/dev/video*"
+        }
     },
     "supported_formats": [
         ".jpg",

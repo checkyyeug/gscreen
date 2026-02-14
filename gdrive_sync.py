@@ -70,10 +70,14 @@ class GoogleDriveSync:
             return url.strip('/')
 
     def _get_file_hash(self, filepath: Path) -> str:
-        """Calculate MD5 hash of a file"""
+        """Calculate MD5 hash of a file
+
+        Uses 64KB chunks for better performance on SD cards and flash storage.
+        Larger chunks reduce I/O overhead while keeping memory usage reasonable.
+        """
         hash_md5 = hashlib.md5()
         with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
+            for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
@@ -98,16 +102,31 @@ class GoogleDriveSync:
         retry=retry_if_exception_type(requests.exceptions.RequestException)
     )
     def download_file(self, direct_url: str, destination: Path) -> bool:
-        """Download a file from URL to destination with retry logic"""
+        """
+        Download a file from URL to destination with retry logic
+
+        Uses atomic write pattern: download to .tmp file first, then rename.
+        This prevents corrupted files if the process crashes mid-download.
+        """
         response = requests.get(direct_url, stream=True, timeout=30)
         response.raise_for_status()
 
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with open(destination, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        return True
+        temp_dest = destination.with_suffix(destination.suffix + '.tmp')
+
+        try:
+            with open(temp_dest, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            # Atomic rename to final destination
+            temp_dest.replace(destination)
+            return True
+        except Exception:
+            # Clean up temp file on failure
+            if temp_dest.exists():
+                temp_dest.unlink()
+            raise
 
     def get_drive_files(self) -> Dict[str, str]:
         """
@@ -330,7 +349,7 @@ class GoogleDriveSync:
             logger.warning("[TimeSync] ntplib not available, install with: pip install ntplib")
             logger.info("[TimeSync] Skipping time sync (ntplib required)")
             return False
-        except Exception as e:
+        except (OSError, socket.gaierror, socket.timeout, ntplib.NTPException) as e:
             logger.warning(f"[TimeSync] Failed to sync time via NTP: {type(e).__name__}: {e}")
             return False
 

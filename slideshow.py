@@ -21,23 +21,34 @@ import queue
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 from contextlib import contextmanager
-import random# Don't import pygame yet - we need to set SDL_VIDEODRIVER first
+# Don't import pygame yet - we need to set SDL_VIDEODRIVER first
 pygame = None
+_pygame_lock = threading.Lock()
+
 def get_pygame():
     global pygame
     if pygame is not None:
         return pygame
-    try:
-        import pygame as pg
-        pygame = pg
-        return pygame
-    except ImportError:
-        return None
+    with _pygame_lock:
+        # Double-check after acquiring lock
+        if pygame is not None:
+            return pygame
+        try:
+            import pygame as pg
+            pygame = pg
+            return pygame
+        except ImportError:
+            return None
 
 try:
     from PIL import Image
+    try:
+        from PIL import UnidentifiedImageError as PILUnidentifiedImageError
+    except ImportError:
+        PILUnidentifiedImageError = None
 except ImportError:
     Image = None
+    PILUnidentifiedImageError = None
 
 try:
     import cv2
@@ -227,7 +238,7 @@ class SlideshowDisplay:
                 logger.info(f"V4L2 devices found: {len(v4l2_devices)}, trying hardware acceleration")
                 self.hw_accel_method = 'v4l2m2m'
                 return True
-        except Exception:
+        except (OSError, PermissionError):
             pass
 
         logger.info("No hardware acceleration detected, using CPU decoding")
@@ -322,7 +333,7 @@ class SlideshowDisplay:
 
             # Check if current time is within the active window
             return start_time <= now < stop_time
-        except Exception as e:
+        except (ValueError, AttributeError) as e:
             logger.error(f"Error checking schedule: {e}")
             return True  # Default to active if there's an error
 
@@ -356,6 +367,20 @@ class SlideshowDisplay:
                     self.screen.fill((0, 0, 0))
                 pg.display.flip()
 
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    def _format_file_time(self, mtime: float) -> str:
+        """Format modification time in readable format"""
+        mod_time = datetime.datetime.fromtimestamp(mtime)
+        return mod_time.strftime("%Y-%m-%d %H:%M")
+
     def _get_file_info(self, image_path: Path) -> dict:
         """Get file information"""
         info = {
@@ -369,23 +394,16 @@ class SlideshowDisplay:
         try:
             # File size
             size_bytes = image_path.stat().st_size
-            if size_bytes < 1024:
-                info['size'] = f"{size_bytes} B"
-            elif size_bytes < 1024 * 1024:
-                info['size'] = f"{size_bytes / 1024:.1f} KB"
-            else:
-                info['size'] = f"{size_bytes / (1024 * 1024):.1f} MB"
+            info['size'] = self._format_file_size(size_bytes)
 
             # Modification date
-            mtime = image_path.stat().st_mtime
-            mod_time = datetime.datetime.fromtimestamp(mtime)
-            info['modified'] = mod_time.strftime("%Y-%m-%d %H:%M")
+            info['modified'] = self._format_file_time(image_path.stat().st_mtime)
 
             # Image dimensions
             if Image is not None:
                 with Image.open(image_path) as img:
                     info['dimensions'] = f"{img.width}x{img.height}"
-        except Exception as e:
+        except (OSError, IOError) as e:
             logger.debug(f"Error getting file info: {e}")
 
         return info
@@ -409,17 +427,10 @@ class SlideshowDisplay:
         try:
             # File size
             size_bytes = video_path.stat().st_size
-            if size_bytes < 1024:
-                info['size'] = f"{size_bytes} B"
-            elif size_bytes < 1024 * 1024:
-                info['size'] = f"{size_bytes / 1024:.1f} KB"
-            else:
-                info['size'] = f"{size_bytes / (1024 * 1024):.1f} MB"
+            info['size'] = self._format_file_size(size_bytes)
 
             # Modification date
-            mtime = video_path.stat().st_mtime
-            mod_time = datetime.datetime.fromtimestamp(mtime)
-            info['modified'] = mod_time.strftime("%Y-%m-%d %H:%M")
+            info['modified'] = self._format_file_time(video_path.stat().st_mtime)
 
             # Video info using cv2
             if cv2 is not None:
@@ -438,7 +449,7 @@ class SlideshowDisplay:
                         cap.release()
                 else:
                     cap.release()
-        except Exception as e:
+        except (OSError, IOError, ValueError, ZeroDivisionError, cv2.error) as e:
             logger.debug(f"Error getting video info: {e}")
 
         return info
@@ -458,14 +469,16 @@ class SlideshowDisplay:
                     # Fallback to default font
                     self.font = pg.font.Font(None, self.statusbar_font_size)
 
-    def _draw_statusbar(self, countdown: float):
-        """Draw status bar at configured positions based on orientation"""
-        if self.virtual_screen is None:
-            return
+    def _get_statusbar_layout_config(self):
+        """
+        Get common status bar layout configuration.
 
-        pg = get_pygame()
-        self._init_font()
-
+        Returns a dict with:
+        - screen_width, screen_height: virtual screen dimensions
+        - layout: the layout configuration for current orientation
+        - file_info_pos, system_info_pos, progress_pos: position settings
+        - physical_res: formatted resolution string
+        """
         screen_width = self.virt_width
         screen_height = self.virt_height
 
@@ -474,18 +487,47 @@ class SlideshowDisplay:
         orientation = 'portrait' if is_portrait else 'landscape'
         layout = self.statusbar_layout.get(orientation, {
             'file_info_position': 'top' if not is_portrait else 'bottom',
-            'system_info_position': 'top' if not is_portrait else 'bottom',
+            'system_info_position': 'bottom' if not is_portrait else 'top',
             'progress_position': 'bottom' if not is_portrait else 'top'
         })
 
         file_info_pos = layout.get('file_info_position', 'top' if not is_portrait else 'bottom')
-        system_info_pos = layout.get('system_info_position', 'top' if not is_portrait else 'bottom')
+        system_info_pos = layout.get('system_info_position', 'bottom' if not is_portrait else 'top')
         progress_pos = layout.get('progress_position', 'bottom' if not is_portrait else 'top')
 
+        # Determine physical resolution based on rotation
         if self.rotation in [90, 270]:
             physical_res = f"{self.screen_height}x{self.screen_width}"
         else:
             physical_res = f"{self.screen_width}x{self.screen_height}"
+
+        return {
+            'screen_width': screen_width,
+            'screen_height': screen_height,
+            'layout': layout,
+            'file_info_pos': file_info_pos,
+            'system_info_pos': system_info_pos,
+            'progress_pos': progress_pos,
+            'physical_res': physical_res
+        }
+
+    def _draw_statusbar(self, countdown: float):
+        """Draw status bar at configured positions based on orientation"""
+        if self.virtual_screen is None:
+            return
+
+        pg = get_pygame()
+        self._init_font()
+
+        # Get common layout configuration
+        config = self._get_statusbar_layout_config()
+        screen_width = config['screen_width']
+        screen_height = config['screen_height']
+        layout = config['layout']
+        file_info_pos = config['file_info_pos']
+        system_info_pos = config['system_info_pos']
+        progress_pos = config['progress_pos']
+        physical_res = config['physical_res']
 
         # Prepare file info texts
         file_texts = []
@@ -1143,7 +1185,16 @@ class SlideshowDisplay:
             return True
 
         except Exception as e:
-            logger.error(f"Error displaying {image_path}: {e}")
+            if PILUnidentifiedImageError is not None and isinstance(e, PILUnidentifiedImageError):
+                logger.error(f"Unsupported image format {image_path}: {e}")
+            elif isinstance(e, (IOError, OSError)):
+                logger.error(f"Cannot load image {image_path}: {e}")
+            elif isinstance(e, (pg.error, ValueError)):
+                logger.error(f"Error rendering image {image_path}: {e}")
+            elif isinstance(e, MemoryError):
+                logger.error(f"Out of memory loading {image_path}")
+            else:
+                logger.error(f"Unexpected error displaying {image_path}: {e}")
             return False
 
     def display_video(self, video_path: Path) -> bool:
@@ -1671,27 +1722,15 @@ class SlideshowDisplay:
 
         self._init_font()
 
-        # Use virtual screen dimensions for software rotation mode
-        screen_width = self.virt_width
-        screen_height = self.virt_height
-
-        # Determine orientation and get corresponding layout (same as images)
-        is_portrait = self.rotation in [90, 270]
-        orientation = 'portrait' if is_portrait else 'landscape'
-        layout = self.statusbar_layout.get(orientation, {
-            'file_info_position': 'top' if not is_portrait else 'bottom',
-            'system_info_position': 'top' if not is_portrait else 'bottom',
-            'progress_position': 'bottom' if not is_portrait else 'top'
-        })
-
-        file_info_pos = layout.get('file_info_position', 'top' if not is_portrait else 'bottom')
-        system_info_pos = layout.get('system_info_position', 'top' if not is_portrait else 'bottom')
-        progress_pos = layout.get('progress_position', 'bottom' if not is_portrait else 'top')
-
-        if self.rotation in [90, 270]:
-            physical_res = f"{self.screen_height}x{self.screen_width}"
-        else:
-            physical_res = f"{self.screen_width}x{self.screen_height}"
+        # Get common layout configuration
+        config = self._get_statusbar_layout_config()
+        screen_width = config['screen_width']
+        screen_height = config['screen_height']
+        layout = config['layout']
+        file_info_pos = config['file_info_pos']
+        system_info_pos = config['system_info_pos']
+        progress_pos = config['progress_pos']
+        physical_res = config['physical_res']
 
         # Helper to format time as MM:SS
         def format_time(t):
