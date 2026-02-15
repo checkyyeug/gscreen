@@ -25,7 +25,39 @@ A lightweight photo and video slideshow application that displays media from Goo
 - Auto-start on boot via systemd service
 - **GPU hardware-accelerated video playback** (auto-detected)
 - **Memory-optimized for 24/7 operation** (LRU caching, periodic cleanup)
-- Low CPU usage, suitable for 24/7 operation
+
+## SD Card Protection
+
+**SD Card Protection Module**
+- **Minimize SD card writes**: Configure system to use RAM disk logging instead of SD card writes
+- **Wear leveling**: Intelligent wear leveling extends SD card lifespan
+- **Health monitoring**: Track SD card health metrics and temperature
+- **Cache optimization**: Use tmpfs/RAM for sync cache and logs
+- **State management**: Automatic state saving prevents data loss from crashes
+
+**Quick Start:**
+\`\`\`bash
+sudo bash install_sd_protection.sh
+\`\`
+
+**Configuration Options** (system section of settings.json):
+\`\`\`json
+{
+    "system": {
+        "weekly_auto_restart": true,
+        "weekly_restart_day": "Sun",
+        "log_to_ram": true,
+        "ram_log_size_mb": 50,
+        "enable_health_monitoring": true,
+        "health_check_interval_hours": 6
+    }
+}
+\`\`
+
+For detailed documentation, see:
+- Quick start guide: \`\`SD_PROTECTION_QUICKSTART.md\`\`
+- Full documentation: \`\`SD_CARD_PROTECTION.md\`\`
+\`\`
 
 ## Requirements
 
