@@ -17,7 +17,6 @@ import time
 import socket
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from config_validation import validate_subprocess_command
 
 # Ensure UTF-8 encoding for file operations
 if sys.platform.startswith('linux'):
@@ -217,7 +216,7 @@ class GoogleDriveSync:
                       "Consider using rclone or gdown for better integration.")
 
         # Using a workaround with gdown for public folders
-        from config_validation import validate_subprocess_command, get_system_paths
+        from config_validation import get_system_paths
         import subprocess
 
         try:

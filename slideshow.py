@@ -1141,7 +1141,7 @@ class SlideshowDisplay:
                 logger.debug("Ran periodic garbage collection and cleared surface pool")
 
         # Light cleanup every 100 frames (approx every 5 seconds at 20fps)
-        elif self._frame_count % 100 == 0:
+        if self._frame_count % 100 == 0:
             # Young generation GC only (faster, less disruptive)
             gc.collect(generation=0)
     
@@ -1450,7 +1450,7 @@ class SlideshowDisplay:
 
             while self.running:
                 # Handle events
-                for event in pg.event.get(timeout=100):  # 100ms timeout to prevent blocking
+                for event in pg.event.get():  # 100ms timeout to prevent blocking
                     if event.type == pg.QUIT:
                         self.running = False
                         break
@@ -2015,7 +2015,7 @@ class SlideshowDisplay:
                     pg.mouse.set_visible(False)
 
                 # Handle events
-                for event in pg.event.get(timeout=100):
+                for event in pg.event.get():
                     if event.type == pg.QUIT:
                         self.running = False
                     elif event.type == pg.KEYDOWN:
@@ -2155,7 +2155,7 @@ class SlideshowDisplay:
         while waiting:
             try:
                 # Handle events
-                for event in pg.event.get(timeout=100):
+                for event in pg.event.get():
                     if event.type == pg.QUIT:
                         waiting = False
                     elif event.type == pg.KEYDOWN:
