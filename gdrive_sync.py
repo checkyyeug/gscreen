@@ -82,7 +82,13 @@ class GoogleDriveSync:
         self.cache_dir.mkdir(exist_ok=True)
         self.supported_formats = set(ext.lower() for ext in self.settings['supported_formats'])
         self._current_files: Dict[str, str] = {}  # filename -> file hash
-        self._drive_id = self._extract_drive_id(self.settings['google_drive_url'])
+
+        # Handle google_drive_url from file if specified
+        drive_url = self.settings['google_drive_url']
+        if isinstance(drive_url, str) and drive_url.startswith('file:'):
+            url_file = drive_url[5:]  # Remove 'file:' prefix
+            drive_url = self._load_url_from_file(url_file)
+        self._drive_id = self._extract_drive_id(drive_url)
         # Time sync settings
         self.timezone_offset = self.settings['sync'].get('timezone_offset', 8)  # Default UTC+8
         self.sync_system_time = self.settings['sync'].get('sync_system_time', True)
@@ -101,6 +107,20 @@ class GoogleDriveSync:
             raise
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in settings file: {e}")
+            raise
+
+    def _load_url_from_file(self, url_file: str) -> str:
+        """Load Google Drive URL from a separate file"""
+        try:
+            with open(url_file, 'r') as f:
+                url = f.read().strip()
+                if not url:
+                    logger.error(f"URL file is empty: {url_file}")
+                    raise ValueError(f"URL file is empty: {url_file}")
+                logger.info(f"Loaded Google Drive URL from: {url_file}")
+                return url
+        except FileNotFoundError:
+            logger.error(f"URL file not found: {url_file}")
             raise
 
     def _extract_drive_id(self, url: str) -> str:
