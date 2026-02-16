@@ -302,8 +302,11 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 
 | Option | Type | Required | Default | Description |
 |--------|------|----------|---------|-------------|
-| `google_drive_url` | string | Yes | - | Public Google Drive folder URL |
+| `google_drive_url` | string | Yes | - | Public Google Drive folder URL, or `file:google_drive.url` to load from external file |
 | `supported_formats` | array | No | see below | File extensions to display |
+
+**External URL File:**
+To keep your Google Drive URL private, use `file:google_drive.url` in settings.json and create a `google_drive.url` file containing your actual URL. The `.url` file is automatically ignored by git.
 
 #### Display Options (`display`)
 
@@ -317,6 +320,7 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 | `show_statusbar` | boolean | `true` | Show status bar overlay |
 | `rotation` | integer | `0` | Display rotation: 0, 90, 180, or 270 |
 | `rotation_mode` | string | `"hardware"` | Rotation method: `"hardware"` or `"software"` |
+| `hw_accel` | string | `"auto"` | Video hardware acceleration: `"auto"`, `"v4l2m2m"`, `"drm"`, or `"none"` |
 | `statusbar_layout` | object | see below | Status bar configuration per orientation |
 
 **Rotation Options:**
@@ -328,6 +332,18 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 **Rotation Modes:**
 - `hardware` - Use system-level rotation (requires config file edit)
 - `software` - Use pygame for rotation (recommended, easier)
+
+**Hardware Acceleration Options:**
+- `"auto"` - Automatically detect and use best available method (default)
+- `"v4l2m2m"` - Force V4L2 M2M (VideoCore VI on Raspberry Pi 4/5)
+- `"drm"` - Force DRM acceleration (may not work on all systems)
+- `"none"` - Disable hardware acceleration (uses OpenCV CPU decoding)
+
+**When to use each option:**
+- `auto` - Recommended for most users; automatically detects available acceleration
+- `v4l2m2m` - Use on Raspberry Pi 4/5 for best performance
+- `drm` - Alternative for systems with DRM support (experimental)
+- `none` - Use on Raspberry Pi 3 or if hardware acceleration causes issues; uses more CPU but more stable
 
 #### Status Bar Layout (`display.statusbar_layout`)
 
@@ -660,6 +676,23 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 - Install ffmpeg if not present: `sudo apt install ffmpeg`
 - Use H.264 encoded videos for best GPU acceleration
 - Lower resolution videos recommended (1920x1080 max)
+- On Raspberry Pi 3, try setting `"hw_accel": "none"` in settings.json if videos don't play
+- Check which hw_accel method is being used: Look for "Using hw_accel method" in logs
+
+### Videos not playing or ending immediately
+- Check logs for which hw_accel method is being used
+- On Raspberry Pi 3, hardware acceleration may not work properly
+- **Solution**: Set `"hw_accel": "none"` in settings.json to use OpenCV instead
+- Check for ffmpeg errors in logs after "Using hw_accel method" message
+- If using `hw_accel: "auto"`, the system may be selecting an incompatible method
+- Try specific methods: `"hw_accel": "v4l2m2m"` or `"hw_accel": "drm"`
+
+### ALSA warning on startup
+- You may see: `ALSA lib pcm.c:7705:(snd_pcm_slave_conf) Unknown field period_size`
+- This is a **harmless warning** from ALSA configuration parsing
+- Audio playback works correctly despite this warning
+- The `run.sh` script uses pulseaudio to minimize these warnings
+- If pulseaudio is not installed, SDL automatically falls back to ALSA
 
 ### Memory usage increasing over time
 - Check logs for "Ran periodic garbage collection" messages
