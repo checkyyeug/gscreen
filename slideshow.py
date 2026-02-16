@@ -76,6 +76,7 @@ class SlideshowDisplay:
         self.show_statusbar = self.display_settings.get('show_statusbar', True)  # Default: True
         self.rotation = self.display_settings.get('rotation', 0)  # Default: 0 (no rotation)
         self.rotation_mode = self.display_settings.get('rotation_mode', 'hardware')  # 'hardware' or 'software'
+        self.hw_accel_setting = self.display_settings.get('hw_accel', 'auto')  # 'auto', 'v4l2m2m', 'drm', or 'none'
 
         # Audio settings
         self.audio_settings = self.settings.get('audio', {})
@@ -227,6 +228,19 @@ class SlideshowDisplay:
 
     def _detect_hw_accel(self) -> bool:
         """Detect if hardware video acceleration is available"""
+        # Check if hw_accel is explicitly disabled
+        if self.hw_accel_setting == 'none':
+            logger.info("Hardware acceleration disabled in settings (hw_accel=none)")
+            self.hw_accel_method = None
+            return False
+
+        # Check if a specific method is requested
+        if self.hw_accel_setting in ['v4l2m2m', 'drm']:
+            self.hw_accel_method = self.hw_accel_setting
+            logger.info(f"Using hardware acceleration: {self.hw_accel_setting} (configured)")
+            return True
+
+        # Auto-detect hardware acceleration
         # Check for ffmpeg with hardware acceleration support
         try:
             result = subprocess.run(
@@ -236,6 +250,7 @@ class SlideshowDisplay:
                 timeout=self.timeouts['subprocess']['normal']
             )
             hwaccels = result.stdout
+            logger.debug(f"Available hwaccels: {hwaccels.strip()}")
 
             # Check for V4L2 M2M (VideoCore VI on Raspberry Pi)
             if 'v4l2m2m' in hwaccels:
@@ -243,10 +258,10 @@ class SlideshowDisplay:
                 logger.info("Hardware acceleration detected: v4l2m2m (VideoCore VI)")
                 return True
 
-            # Check for other methods
+            # Check for other methods (drm is less stable on some systems)
             if 'drm' in hwaccels:
                 self.hw_accel_method = 'drm'
-                logger.info("Hardware acceleration detected: drm")
+                logger.info("Hardware acceleration detected: drm (may not work on all systems)")
                 return True
 
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -1409,6 +1424,10 @@ class SlideshowDisplay:
         ])
 
         try:
+            # Log the ffmpeg command for debugging
+            logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd[:5])}... [truncated]")
+            logger.info(f"Using hw_accel method: {self.hw_accel_method}")
+
             # Start ffmpeg process
             process = subprocess.Popen(
                 ffmpeg_cmd,
@@ -1416,6 +1435,15 @@ class SlideshowDisplay:
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL
             )
+
+            # Quick check to ensure process started successfully
+            time.sleep(0.1)  # Give ffmpeg a moment to start
+            if process.poll() is not None:
+                # Process exited immediately - something went wrong
+                stderr_output = process.stderr.read().decode('utf-8', errors='ignore')
+                logger.error(f"FFmpeg exited immediately with code {process.returncode}")
+                logger.error(f"FFmpeg stderr: {stderr_output[:500]}")
+                return self._display_video_opencv(video_path)
 
             # Calculate frame size (use actual output dimensions)
             frame_size = output_width * output_height * 3  # RGB24 = 3 bytes per pixel
@@ -1552,6 +1580,14 @@ class SlideshowDisplay:
             logger.warning("ffmpeg not found. Falling back to OpenCV.")
             return self._display_video_opencv(video_path)
         except Exception as e:
+            # Try to get stderr output for debugging
+            if 'process' in locals():
+                try:
+                    stderr_output = process.stderr.read().decode('utf-8', errors='ignore')
+                    if stderr_output:
+                        logger.error(f"FFmpeg stderr: {stderr_output[:500]}")
+                except:
+                    pass
             logger.error(f"Error in HW accelerated playback: {e}, falling back to OpenCV")
             return self._display_video_opencv(video_path)
 

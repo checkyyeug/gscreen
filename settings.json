@@ -1,0 +1,81 @@
+{
+    "google_drive_url": "https://drive.google.com/drive/folders/127zvITIqS1TO8-giq_9jhm9WK0QxaeIf?usp=sharing",
+    "display": {
+        "hdmi_port": 1,
+        "fullscreen": true,
+        "borderless": true,
+        "background_color": [0, 0, 0],
+        "hide_mouse": true,
+        "show_statusbar": true,
+        "rotation_mode": "software",
+        "rotation": 90,
+        "hw_accel": "auto",
+        "statusbar_layout": {
+            "opacity": 0.2,
+            "landscape": {
+                "system_info_position": "bottom",
+                "progress_position": "bottom",
+                "file_info_position": "bottom"
+            },
+            "portrait": {
+                "system_info_position": "bottom",
+                "progress_position": "bottom",
+                "file_info_position": "bottom"
+            }
+        }
+    },
+    "slideshow": {
+        "interval_seconds": 5,
+        "scale_mode": "fit"
+    },
+    "schedule": {
+        "enabled": true,
+        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "start": "07:00",
+        "stop": "22:00"
+    },
+    "audio": {
+        "enabled": true,
+        "device": "hdmi",
+        "volume": 50
+    },
+    "sync": {
+        "check_interval_minutes": 3,
+        "min_sync_interval_seconds": 180,
+        "local_cache_dir": "./media",
+        "download_on_start": true
+    },
+    "system": {
+        "_comment": "System-level settings for SD card protection and maintenance",
+        "weekly_auto_restart": true,
+        "weekly_restart_day": "Sat",
+        "log_to_ram": true,
+        "ram_log_size_mb": 50,
+        "enable_health_monitoring": true,
+        "health_check_interval_hours": 6
+    },
+    "supported_formats": [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".tiff",
+        ".tif",
+        ".tga",
+        ".pbm",
+        ".pgm",
+        ".ppm",
+        ".pnm",
+        ".ico",
+        ".pcx",
+        ".dib",
+        ".xbm",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".webm"
+    ]
+}
