@@ -11,8 +11,8 @@ ENV/
 # Media - don't commit user images
 media/
 
-# Settings - may contain sensitive info
-settings.json
+# URL files - may contain sensitive info
+*.url
 
 # IDE
 .vscode/
