@@ -1312,8 +1312,10 @@ class SlideshowDisplay:
                 '-vn',  # Don't play video (we'll handle display)
                 '-nodisp',  # Don't display ffplay window
                 '-autoexit',
+                '-loglevel', 'quiet',  # Suppress ALSA underrun messages
                 '-volume', str(self.audio_volume),
                 '-audio_demuxer', 'ffmpeg',
+                '-thread_queue_size', '512',  # Larger queue for smoother audio
                 '-i', str(video_path),
                 '-ao', f'alsa:{alsa_device}'
             ]
@@ -1422,6 +1424,12 @@ class SlideshowDisplay:
             fps = 30  # Default FPS estimation
             last_statusbar_update = start_time
 
+            # Get status bar layout configuration for excluding from video draw area
+            statusbar_config = self._get_statusbar_layout_config()
+            layout = statusbar_config['layout']
+            screen_width = statusbar_config['screen_width']
+            screen_height = statusbar_config['screen_height']
+
             # Thread for reading frames from ffmpeg
             frame_queue = queue.Queue(maxsize=2)  # Reduced to minimize memory (each frame ~6MB)
             stop_event = threading.Event()
@@ -1484,9 +1492,24 @@ class SlideshowDisplay:
                 # Use actual ffmpeg output dimensions (may differ from video_width/height for 'fit' mode)
                 frame_surface = pg.image.frombuffer(frame_data, (output_width, output_height), 'RGB')
 
-                # Display frame
+                # Display frame, preserving status bar area
                 target_screen.fill(self.bg_color)
+
+                # Save current clip and exclude status bar areas when drawing video frame
+                old_clip = target_screen.get_clip()
+                clip_rect = old_clip if old_clip else pg.Rect(0, 0, screen_width, screen_height)
+
+                # Exclude top status bar area
+                if layout['file_info_position'] == 'top' or layout['system_info_position'] == 'top' or layout['progress_position'] == 'top':
+                    clip_rect = clip_rect.clip(pg.Rect(0, self.statusbar_height, screen_width, screen_height - self.statusbar_height))
+
+                # Exclude bottom status bar area
+                if layout['file_info_position'] == 'bottom' or layout['system_info_position'] == 'bottom' or layout['progress_position'] == 'bottom':
+                    clip_rect = clip_rect.clip(pg.Rect(0, 0, screen_width, screen_height - self.statusbar_height))
+
+                target_screen.set_clip(clip_rect)
                 target_screen.blit(frame_surface, (x_offset, y_offset))
+                target_screen.set_clip(old_clip)
 
                 # Update status bar periodically
                 current_time = time.time()
@@ -1554,7 +1577,9 @@ class SlideshowDisplay:
                 '-vn',  # Don't play video (we'll handle display)
                 '-nodisp',  # Don't display ffplay window
                 '-autoexit',
+                '-loglevel', 'quiet',  # Suppress ALSA underrun messages
                 '-volume', str(self.audio_volume),
+                '-thread_queue_size', '512',  # Larger queue for smoother audio
                 '-i', str(video_path),
                 '-ao', f'alsa:{alsa_device}'
             ]
@@ -1652,6 +1677,10 @@ class SlideshowDisplay:
 
                 logger.info(f"Playing video: {video_path.name} ({video_width}x{video_height} @ {fps:.1f}fps)")
 
+                # Get status bar layout configuration for excluding from video draw area
+                statusbar_config = self._get_statusbar_layout_config()
+                layout = statusbar_config['layout']
+
                 start_time = time.time()
                 frame_start_time = start_time
                 current_frame_idx = 0
@@ -1697,7 +1726,7 @@ class SlideshowDisplay:
                         'RGB'
                     )
 
-                    # Display frame
+                    # Display frame, preserving status bar area
                     # Determine target screen based on rotation mode
                     if self.rotation_mode == 'software':
                         target_screen = self.virtual_screen
@@ -1705,7 +1734,22 @@ class SlideshowDisplay:
                         target_screen = self.screen
 
                     target_screen.fill(self.bg_color)
+
+                    # Save current clip and exclude status bar areas when drawing video frame
+                    old_clip = target_screen.get_clip()
+                    clip_rect = old_clip if old_clip else pg.Rect(0, 0, self.virt_width, self.virt_height)
+
+                    # Exclude top status bar area
+                    if layout['file_info_position'] == 'top' or layout['system_info_position'] == 'top' or layout['progress_position'] == 'top':
+                        clip_rect = clip_rect.clip(pg.Rect(0, self.statusbar_height, self.virt_width, self.virt_height - self.statusbar_height))
+
+                    # Exclude bottom status bar area
+                    if layout['file_info_position'] == 'bottom' or layout['system_info_position'] == 'bottom' or layout['progress_position'] == 'bottom':
+                        clip_rect = clip_rect.clip(pg.Rect(0, 0, self.virt_width, self.virt_height - self.statusbar_height))
+
+                    target_screen.set_clip(clip_rect)
                     target_screen.blit(frame_surface, (x, y))
+                    target_screen.set_clip(old_clip)
 
                     # Update status bar with video progress
                     current_time = time.time() - start_time
@@ -1918,9 +1962,9 @@ class SlideshowDisplay:
         with self._state_lock:
             current_time = time.time()
             elapsed = current_time - self._last_sync_time
-        # Log every 30 seconds to show we're alive
+        # Log every 30 seconds to show we're alive (debug level)
         if int(elapsed) % 30 == 0:
-            logger.info(f"Sync check: elapsed={elapsed:.1f}s, interval={self.sync_interval}s")
+            logger.debug(f"Sync check: elapsed={elapsed:.1f}s, interval={self.sync_interval}s")
         if not force and elapsed < self.sync_interval:
             return False
 
