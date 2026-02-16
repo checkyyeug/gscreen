@@ -95,11 +95,16 @@ def validate_interval(value: Any, field_name: str) -> int:
 
 
 def validate_url(value: Any, field_name: str) -> str:
-    """Validate google_drive_url is a valid Google Drive URL"""
+    """Validate google_drive_url is a valid Google Drive URL or file reference"""
     if not isinstance(value, str):
         raise ValidationError(field_name, "Must be a string")
+    # Support both direct URLs and file references
+    if value.startswith('file:'):
+        if len(value) <= 5:
+            raise ValidationError(field_name, "File reference must specify a path (e.g., 'file:url.txt')")
+        return value
     if not value.startswith('https://'):
-        raise ValidationError(field_name, "Must start with 'https://'")
+        raise ValidationError(field_name, "Must start with 'https://' or 'file:'")
     if 'drive.google.com' not in value:
         raise ValidationError(field_name, "Must be a Google Drive URL")
     return value
