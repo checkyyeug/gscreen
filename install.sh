@@ -53,11 +53,20 @@ sudo apt install -y \
     libv4l-dev \
     libxvidcore-dev \
     libx264-dev \
-    libatlas-base-dev \
     ffmpeg \
     fonts-noto-cjk \
     fonts-noto-cjk-extra \
     git
+
+# Install BLAS/LAPACK libraries (for numpy)
+# Try modern alternatives first (Debian Trixie+), fallback to old package
+echo ""
+echo "Installing BLAS/LAPACK libraries..."
+if ! sudo apt install -y libopenblas-dev 2>/dev/null; then
+    if ! sudo apt install -y libatlas-base-dev 2>/dev/null; then
+        echo "Warning: Could not install BLAS library, numpy may use internal fallback"
+    fi
+fi
 
 # Create virtual environment
 echo ""
