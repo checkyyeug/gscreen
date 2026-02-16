@@ -4,7 +4,11 @@
         "hdmi_port": 1,
         "fullscreen": true,
         "borderless": true,
-        "background_color": [0, 0, 0],
+        "background_color": [
+            0,
+            0,
+            0
+        ],
         "hide_mouse": true,
         "show_statusbar": true,
         "rotation_mode": "software",
@@ -21,7 +25,8 @@
                 "progress_position": "top",
                 "file_info_position": "bottom"
             }
-        }
+        },
+        "statusbar_height": 30
     },
     "slideshow": {
         "interval_seconds": 5,
@@ -29,7 +34,15 @@
     },
     "schedule": {
         "enabled": false,
-        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+        ],
         "start": "07:00",
         "stop": "23:00"
     },
@@ -53,7 +66,34 @@
         "log_to_ram": true,
         "ram_log_size_mb": 50,
         "enable_health_monitoring": true,
-        "health_check_interval_hours": 6
+        "health_check_interval_hours": 6,
+        "paths": {
+            "_comment": "System paths - rarely need to change these",
+            "framebuffer_device": "/dev/fb0",
+            "ram_log_dir": "/dev/shm/gscreen_logs",
+            "x11_socket_dir": "/tmp/.X11-unix",
+            "sysfs_graphics_path": "/sys/class/graphics",
+            "sysfs_drm_path": "/sys/class/drm",
+            "proc_net_wireless": "/proc/net/wireless",
+            "dev_video_glob": "/dev/video*"
+        },
+        "timeouts": {
+            "_comment": "Timeout values in seconds",
+            "network": {
+                "_comment": "Network operation timeouts",
+                "download": 300,
+                "list": 60,
+                "head": 10,
+                "default": 30
+            },
+            "subprocess": {
+                "_comment": "Subprocess command timeouts",
+                "quick": 1,
+                "normal": 2,
+                "long": 10,
+                "reboot": 10
+            }
+        }
     },
     "supported_formats": [
         ".jpg",

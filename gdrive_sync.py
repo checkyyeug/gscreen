@@ -14,6 +14,7 @@ import requests
 from pathlib import Path
 from typing import Set, Dict
 import time
+import socket
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -23,6 +24,52 @@ if sys.platform.startswith('linux'):
     locale.setlocale(locale.LC_ALL, 'C.UTF-8')
 
 # Logging will be configured by main module
+logger = logging.getLogger(__name__)
+
+
+# Allowed commands for subprocess execution (security measure)
+ALLOWED_COMMANDS = {
+    'rclone', 'gdown', 'curl', 'wget', 'find', 'rm', 'cp', 'mv',
+    'ffmpeg', 'ffplay', 'cv2', 'python', 'python3', 'pip', 'pip3',
+    'systemctl', 'reboot', 'poweroff', 'ntpdate', 'timedatectl',
+    'iwconfig', 'lsusb', 'lsblk', 'df', 'free', 'uname'
+}
+
+
+def validate_subprocess_command(cmd_list: list) -> bool:
+    """
+    Validate subprocess command to prevent injection attacks.
+
+    Only allows commands in ALLOWED_COMMANDS and validates arguments
+    don't contain shell metacharacters that could enable injection.
+
+    Args:
+        cmd_list: List of command arguments (first element is the command)
+
+    Returns:
+        True if command is safe, raises ValueError otherwise
+    """
+    if not cmd_list:
+        raise ValueError("Empty command list")
+
+    cmd = cmd_list[0]
+    cmd_base = Path(cmd).name if '/' in cmd else cmd
+
+    if cmd_base not in ALLOWED_COMMANDS:
+        raise ValueError(f"Command not allowed: {cmd}")
+
+    # Check for shell metacharacters in arguments (could enable injection)
+    shell_chars = [';', '|', '&', '$(', ')', '`', '\n', '\r']
+    for arg in cmd_list[1:]:
+        if isinstance(arg, str):
+            for char in shell_chars:
+                if char in arg:
+                    raise ValueError(f"Shell metacharacter '{char}' in argument: {arg}")
+
+    return True
+
+
+logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 
@@ -70,10 +117,14 @@ class GoogleDriveSync:
             return url.strip('/')
 
     def _get_file_hash(self, filepath: Path) -> str:
-        """Calculate MD5 hash of a file"""
+        """Calculate MD5 hash of a file
+
+        Uses 64KB chunks for better performance on SD cards and flash storage.
+        Larger chunks reduce I/O overhead while keeping memory usage reasonable.
+        """
         hash_md5 = hashlib.md5()
         with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
+            for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
@@ -97,17 +148,58 @@ class GoogleDriveSync:
         wait=wait_exponential(multiplier=1, min=2, max=30),
         retry=retry_if_exception_type(requests.exceptions.RequestException)
     )
-    def download_file(self, direct_url: str, destination: Path) -> bool:
-        """Download a file from URL to destination with retry logic"""
+    def download_file(self, direct_url: str, destination: Path, max_size_mb: int = 500) -> bool:
+        """
+        Download a file from URL to destination with retry logic
+
+        Uses atomic write pattern: download to .tmp file first, then rename.
+        This prevents corrupted files if the process crashes mid-download.
+
+        Args:
+            direct_url: URL to download from
+            destination: Path to save the file
+            max_size_mb: Maximum file size in MB (default: 500)
+
+        Raises:
+            ValueError: If file size exceeds max_size_mb
+        """
+        # Use HEAD request first to check file size
+        try:
+            head_response = requests.head(direct_url, timeout=10, allow_redirects=True)
+            content_length = head_response.headers.get('Content-Length')
+            if content_length:
+                size_mb = int(content_length) / (1024 * 1024)
+                if size_mb > max_size_mb:
+                    logger.warning(f"File too large: {size_mb:.1f}MB (max: {max_size_mb}MB): {destination.name}")
+                    raise ValueError(f"File too large: {size_mb:.1f}MB")
+        except requests.RequestException:
+            # If HEAD fails, proceed with download and check during transfer
+            pass
+
         response = requests.get(direct_url, stream=True, timeout=30)
         response.raise_for_status()
 
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with open(destination, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        return True
+        temp_dest = destination.with_suffix(destination.suffix + '.tmp')
+
+        downloaded_bytes = 0
+        try:
+            with open(temp_dest, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_bytes += len(chunk)
+                        # Check size during download
+                        if downloaded_bytes > max_size_mb * 1024 * 1024:
+                            raise ValueError(f"File size exceeded {max_size_mb}MB limit")
+            # Atomic rename to final destination
+            temp_dest.replace(destination)
+            return True
+        except Exception:
+            # Clean up temp file on failure
+            if temp_dest.exists():
+                temp_dest.unlink()
+            raise
 
     def get_drive_files(self) -> Dict[str, str]:
         """
@@ -124,13 +216,15 @@ class GoogleDriveSync:
                       "Consider using rclone or gdown for better integration.")
 
         # Using a workaround with gdown for public folders
+        from config_validation import get_system_paths
         import subprocess
 
         try:
-            # Try to get file list using gdown
+            # Validate download command before running
+            list_cmd = ['gdown', '--list', f'https://drive.google.com/drive/folders/{self._drive_id}']
+            validate_subprocess_command(list_cmd)
             result = subprocess.run(
-                ['gdown', '--list', f'https://drive.google.com/drive/folders/{self._drive_id}'],
-                capture_output=True, text=True, encoding='utf-8', timeout=60
+                list_cmd, capture_output=True, text=True, encoding='utf-8', timeout=60
             )
 
             if result.returncode == 0:
@@ -143,6 +237,41 @@ class GoogleDriveSync:
             logger.error(f"Failed to list drive files: {e}")
 
         return {}
+
+    def _compare_file_lists(self, local_files: Dict, drive_files: Dict) -> tuple:
+        """
+        Compare local and remote file lists to determine sync actions.
+
+        Args:
+            local_files: Dict of {filename: (size, mod_time)}
+            drive_files: Dict of {filename: size or None}
+
+        Returns:
+            Tuple of (files_to_add, files_to_update, files_to_delete)
+            - files_to_add: Files on Drive but not local
+            - files_to_update: Files on Drive with different size than local
+            - files_to_delete: Files locally but not on Drive
+        """
+        local_filenames = set(local_files.keys())
+        drive_filenames = set(drive_files.keys())
+
+        files_to_add = []
+        files_to_update = []
+        files_to_delete = []
+
+        # Check for new or updated files
+        for filename in drive_filenames:
+            drive_size = drive_files[filename]
+            if filename not in local_files:
+                files_to_add.append(filename)
+            elif drive_size is not None and local_files[filename][0] != drive_size:
+                files_to_update.append(filename)
+
+        # Check for deleted files
+        for filename in local_filenames - drive_filenames:
+            files_to_delete.append(filename)
+
+        return files_to_add, files_to_update, files_to_delete
 
     def sync(self) -> bool:
         """
@@ -330,7 +459,7 @@ class GoogleDriveSync:
             logger.warning("[TimeSync] ntplib not available, install with: pip install ntplib")
             logger.info("[TimeSync] Skipping time sync (ntplib required)")
             return False
-        except Exception as e:
+        except (OSError, socket.gaierror, socket.timeout, ntplib.NTPException) as e:
             logger.warning(f"[TimeSync] Failed to sync time via NTP: {type(e).__name__}: {e}")
             return False
 

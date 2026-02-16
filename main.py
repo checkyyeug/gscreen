@@ -55,7 +55,7 @@ def setup_logging_from_settings():
             )
             print(f"[INFO] Logging to RAM: {RAM_LOG_DIR} (log_to_ram=true)", file=sys.stderr)
             return
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             print(f"[WARN] Could not setup RAM logging: {e}", file=sys.stderr)
     
     # Default: log to stdout only (no file writes)
@@ -82,7 +82,7 @@ def check_dependencies():
         result = subprocess.run([sys.executable, '-m', 'pip', 'list'], capture_output=True, text=True, timeout=5)
         if 'pygame-ce' not in result.stdout.lower():
             missing.append('pygame-ce')
-    except Exception:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         missing.append('pygame-ce')
 
     try:
