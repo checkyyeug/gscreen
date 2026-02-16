@@ -161,6 +161,11 @@ The installation script will:
 - Add your user to the `video` group (for display access)
 - Create wrapper scripts (`run.sh`, `sync.sh`)
 
+**Compatibility Notes:**
+- **Raspberry Pi 3/4/5**: Fully supported on Raspberry Pi OS (Bullseye, Bookworm) and Debian Trixie
+- **Debian Trixie**: The install script automatically uses `libopenblas-dev` instead of the deprecated `libatlas-base-dev`
+- **Other Linux distributions**: May require manual dependency installation
+
 ### 3. Log out and log back in
 
 **Important:** After installation, log out and log back in for the `video` group membership to take effect.
@@ -420,6 +425,9 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 ```bash
 sudo apt install ffmpeg
 ```
+
+**Audio Driver:**
+The `run.sh` script uses pulseaudio for audio output to minimize ALSA warnings. If pulseaudio is not available, SDL will fall back to ALSA automatically. You may see harmless ALSA configuration warnings during startup - these can be safely ignored as audio will still work correctly.
 
 #### Font Support
 
@@ -681,6 +689,13 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
   1. `timedatectl` - Systemd time service (preferred)
   2. `ntpdate` - Traditional NTP client
   3. Python `ntplib` - Pure Python NTP (fallback)
+
+### ALSA warning on startup
+- You may see: `ALSA lib pcm.c:7705:(snd_pcm_slave_conf) Unknown field period_size`
+- This is a **harmless warning** from ALSA configuration parsing
+- Audio playback works correctly despite this warning
+- The `run.sh` script uses pulseaudio to minimize these warnings
+- If pulseaudio is not installed, SDL automatically falls back to ALSA
 
 ### Chinese text or filenames not displaying correctly
 - **Text display (schedule countdown, error messages)**: Install CJK fonts:
