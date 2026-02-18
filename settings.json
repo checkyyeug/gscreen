@@ -22,7 +22,7 @@
                 "file_info_position": "bottom"
             }
         },
-	#"hw_accel": "none"
+        "hw_accel": "auto"
     },
     "slideshow": {
         "interval_seconds": 5,
