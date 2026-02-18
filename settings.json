@@ -9,7 +9,6 @@
         "show_statusbar": true,
         "rotation_mode": "software",
         "rotation": 90,
-        "hw_accel": "auto",
         "statusbar_layout": {
             "opacity": 0.2,
             "landscape": {
@@ -22,7 +21,8 @@
                 "progress_position": "bottom",
                 "file_info_position": "bottom"
             }
-        }
+        },
+	#"hw_accel": "none"
     },
     "slideshow": {
         "interval_seconds": 5,

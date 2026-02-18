@@ -851,20 +851,26 @@ class SlideshowDisplay:
         # Always try SDL's default auto-detection as last resort
         def _init_sdl_default():
             logger.info("Trying SDL default driver (auto-detect)...")
-            # Clear any SDL driver settings to let SDL auto-detect
+            # Clear any SDL driver settings to let SDL auto-detect (preserve audio)
+            saved_sdl_audio = os.environ.get('SDL_AUDIODRIVER')
             for key in list(os.environ.keys()):
-                if key.startswith('SDL_'):
+                if key.startswith('SDL_') and key != 'SDL_AUDIODRIVER':
                     del os.environ[key]
+            if saved_sdl_audio:
+                os.environ['SDL_AUDIODRIVER'] = saved_sdl_audio
             return True
         drivers_to_try.append(('sdl-default', _init_sdl_default))
 
         # Try each driver
         for driver_name, init_func in drivers_to_try:
             try:
-                # Clear any previous SDL config
+                # Clear any previous SDL config (but preserve audio settings)
+                saved_sdl_audio = os.environ.get('SDL_AUDIODRIVER')
                 for key in list(os.environ.keys()):
-                    if key.startswith('SDL_'):
+                    if key.startswith('SDL_') and key != 'SDL_AUDIODRIVER':
                         del os.environ[key]
+                if saved_sdl_audio:
+                    os.environ['SDL_AUDIODRIVER'] = saved_sdl_audio
                 if 'DISPLAY' in os.environ:
                     del os.environ['DISPLAY']
 
@@ -1332,15 +1338,21 @@ class SlideshowDisplay:
                 '-audio_demuxer', 'ffmpeg',
                 '-thread_queue_size', '512',  # Larger queue for smoother audio
                 '-i', str(video_path),
-                '-ao', f'alsa:{alsa_device}'
+                '-ao', f'alsa:device=hw:{alsa_device}'
             ]
+
+            # Setup environment to suppress ALSA messages
+            ffplay_env = os.environ.copy()
+            ffplay_env['ALSA_CONFIG_PATH'] = '/dev/null'
+            ffplay_env['AUDIODEV'] = f'hw:{alsa_device}'
 
             # Start ffplay for audio in background
             ffplay_process = subprocess.Popen(
                 ffplay_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                env=ffplay_env
             )
 
             # Play video without audio using OpenCV
@@ -1617,15 +1629,21 @@ class SlideshowDisplay:
                 '-volume', str(self.audio_volume),
                 '-thread_queue_size', '512',  # Larger queue for smoother audio
                 '-i', str(video_path),
-                '-ao', f'alsa:{alsa_device}'
+                '-ao', f'alsa:device=hw:{alsa_device}'
             ]
+
+            # Setup environment to suppress ALSA messages
+            ffplay_env = os.environ.copy()
+            ffplay_env['ALSA_CONFIG_PATH'] = '/dev/null'
+            ffplay_env['AUDIODEV'] = f'hw:{alsa_device}'
 
             # Start ffplay for audio in background
             ffplay_process = subprocess.Popen(
                 ffplay_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                env=ffplay_env
             )
 
             # Play video with hardware acceleration

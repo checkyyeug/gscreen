@@ -25,6 +25,7 @@ A lightweight photo and video slideshow application that displays media from Goo
 - Auto-start on boot via systemd service
 - **GPU hardware-accelerated video playback** (auto-detected)
 - **Memory-optimized for 24/7 operation** (LRU caching, periodic cleanup)
+- **Hardware detection**: Auto-detects RPi model, audio system, and generates config recommendations
 
 ## SD Card Protection
 
@@ -90,6 +91,52 @@ For detailed documentation, see:
 | **Pi 3B+** | ✅ 10-15% CPU | ⚠️ 30-40% CPU | 4-core @ 1.4GHz |
 | **Pi 4** | ✅ 5-10% CPU | ✅ 15-20% CPU | 4-core @ 1.5GHz |
 | **Pi 5** | ✅ 3-5% CPU | ✅ 5-10% CPU | 4-core @ 2.4GHz |
+
+## Hardware Detection
+
+gScreen automatically detects your hardware configuration on startup and provides recommendations:
+
+```
+============================================================
+         HARDWARE DETECTION REPORT
+============================================================
+
+[Hardware]
+  Model:         Raspberry Pi 4 Model B Rev 1.4
+  Generation:    Raspberry Pi 4
+  HW Accel:      drm
+
+[Audio System]
+  System:        alsa
+  HDMI Audio:    Card [0]
+  Headphone:     Available
+
+[Configuration Recommendations]
+----------------------------------------
+  display.hw_accel       'auto' -> 'auto' [OK]
+  SDL_AUDIODRIVER        'alsa' -> 'alsa' [INFO]
+
+[Suggestions]
+  * Using ALSA directly. ALSA warning messages are harmless.
+
+============================================================
+```
+
+### Auto-Adjustments
+
+- **Raspberry Pi 3**: Automatically disables hardware acceleration (`hw_accel: none`) for stability
+- **Raspberry Pi 4/5**: Enables hardware acceleration when available
+- **ALSA message suppression**: Automatically suppresses harmless ALSA warning messages
+
+### Detected Information
+
+| Detection | Description |
+|-----------|-------------|
+| RPi Model | From `/proc/cpuinfo` |
+| Generation | 1, 2, 3, 4, or 5 |
+| Audio System | ALSA, PulseAudio, or PipeWire |
+| HDMI Audio | Available audio cards |
+| HW Acceleration | v4l2m2m, drm, or none |
 
 ## Performance Features
 
@@ -307,8 +354,11 @@ The `settings.json` file controls all aspects of gScreen. Below is a complete re
 
 | Option | Type | Required | Default | Description |
 |--------|------|----------|---------|-------------|
-| `google_drive_url` | string | Yes | - | Public Google Drive folder URL |
+| `google_drive_url` | string | Yes | - | Public Google Drive folder URL, or `file:google_drive.url` to load from external file |
 | `supported_formats` | array | No | see below | File extensions to display |
+
+**External URL File:**
+To keep your Google Drive URL private, use `file:google_drive.url` in settings.json and create a `google_drive.url` file containing your actual URL. The `.url` file is automatically ignored by git.
 
 #### Display Options (`display`)
 
@@ -683,6 +733,21 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 - Lower resolution videos recommended (1920x1080 max)
 - On Raspberry Pi 3, try setting `"hw_accel": "none"` in settings.json if videos don't play
 - Check which hw_accel method is being used: Look for "Using hw_accel method" in logs
+
+### Videos not playing or ending immediately
+- Check logs for which hw_accel method is being used
+- On Raspberry Pi 3, hardware acceleration may not work properly
+- **Solution**: Set `"hw_accel": "none"` in settings.json to use OpenCV instead
+- Check for ffmpeg errors in logs after "Using hw_accel method" message
+- If using `hw_accel: "auto"`, the system may be selecting an incompatible method
+- Try specific methods: `"hw_accel": "v4l2m2m"` or `"hw_accel": "drm"`
+
+### ALSA warning on startup
+- gScreen automatically suppresses ALSA warning messages via environment variables
+- If you still see warnings like `ALSA lib pcm.c:7705:(snd_pcm_slave_conf) Unknown field period_size`, these are **harmless**
+- Audio playback works correctly despite these warnings
+- The systemd service file includes `ALSA_CONFIG_PATH=/dev/null` to suppress most messages
+- If running manually, the app sets `SDL_AUDIODRIVER=dummy` during init to prevent SDL audio init errors
 
 ### Memory usage increasing over time
 - Check logs for "Ran periodic garbage collection" messages
