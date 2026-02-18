@@ -13,6 +13,8 @@ WorkingDirectory=/home/rpi4/gscreen
 Environment="PYTHONUNBUFFERED=1"
 Environment="PYGAME_HIDE_SUPPORT_PROMPT=1"
 Environment="SDL_AUDIODRIVER=alsa"
+Environment="ALSA_CONFIG_PATH=/dev/null"
+Environment="PYTHONWARNINGS=ignore"
 
 # 关键：创建 RAM 目录用于日志和临时文件
 ExecStartPre=/bin/mkdir -p /dev/shm/gscreen_logs

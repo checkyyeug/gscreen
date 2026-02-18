@@ -1317,15 +1317,21 @@ class SlideshowDisplay:
                 '-audio_demuxer', 'ffmpeg',
                 '-thread_queue_size', '512',  # Larger queue for smoother audio
                 '-i', str(video_path),
-                '-ao', f'alsa:{alsa_device}'
+                '-ao', f'alsa:device=hw:{alsa_device}'
             ]
+
+            # Setup environment to suppress ALSA messages
+            ffplay_env = os.environ.copy()
+            ffplay_env['ALSA_CONFIG_PATH'] = '/dev/null'
+            ffplay_env['AUDIODEV'] = f'hw:{alsa_device}'
 
             # Start ffplay for audio in background
             ffplay_process = subprocess.Popen(
                 ffplay_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                env=ffplay_env
             )
 
             # Play video without audio using OpenCV
@@ -1581,15 +1587,21 @@ class SlideshowDisplay:
                 '-volume', str(self.audio_volume),
                 '-thread_queue_size', '512',  # Larger queue for smoother audio
                 '-i', str(video_path),
-                '-ao', f'alsa:{alsa_device}'
+                '-ao', f'alsa:device=hw:{alsa_device}'
             ]
+
+            # Setup environment to suppress ALSA messages
+            ffplay_env = os.environ.copy()
+            ffplay_env['ALSA_CONFIG_PATH'] = '/dev/null'
+            ffplay_env['AUDIODEV'] = f'hw:{alsa_device}'
 
             # Start ffplay for audio in background
             ffplay_process = subprocess.Popen(
                 ffplay_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                env=ffplay_env
             )
 
             # Play video with hardware acceleration

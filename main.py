@@ -14,6 +14,13 @@ Display:
 
 import os
 import sys
+
+# Suppress ALSA messages early (before any audio library imports)
+os.environ['ALSA_CONFIG_PATH'] = '/dev/null'
+os.environ['SDL_AUDIODRIVER'] = 'dummy'  # Disable SDL audio during init (we use ffplay for video audio)
+if 'PYTHONWARNINGS' not in os.environ:
+    os.environ['PYTHONWARNINGS'] = 'ignore'
+
 import json
 import logging
 import argparse
@@ -208,6 +215,17 @@ def main():
     # Check dependencies
     if not check_dependencies():
         sys.exit(1)
+
+    # Run hardware detection and print recommendations
+    from hardware_detection import run_hardware_detection, print_config_recommendations
+    hw_info = run_hardware_detection(settings)
+    print_config_recommendations(hw_info)
+
+    # Auto-adjust settings for RPi 3 (limited hardware acceleration)
+    if hw_info.rpi_generation == 3:
+        if settings.get('display', {}).get('hw_accel', 'auto') not in ['none', False]:
+            logger.info("RPi 3 detected: Auto-disabling hardware acceleration")
+            settings['display']['hw_accel'] = 'none'
 
     # Check framebuffer access
     if not check_framebuffer():
