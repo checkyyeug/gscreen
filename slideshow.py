@@ -836,20 +836,26 @@ class SlideshowDisplay:
         # Always try SDL's default auto-detection as last resort
         def _init_sdl_default():
             logger.info("Trying SDL default driver (auto-detect)...")
-            # Clear any SDL driver settings to let SDL auto-detect
+            # Clear any SDL driver settings to let SDL auto-detect (preserve audio)
+            saved_sdl_audio = os.environ.get('SDL_AUDIODRIVER')
             for key in list(os.environ.keys()):
-                if key.startswith('SDL_'):
+                if key.startswith('SDL_') and key != 'SDL_AUDIODRIVER':
                     del os.environ[key]
+            if saved_sdl_audio:
+                os.environ['SDL_AUDIODRIVER'] = saved_sdl_audio
             return True
         drivers_to_try.append(('sdl-default', _init_sdl_default))
 
         # Try each driver
         for driver_name, init_func in drivers_to_try:
             try:
-                # Clear any previous SDL config
+                # Clear any previous SDL config (but preserve audio settings)
+                saved_sdl_audio = os.environ.get('SDL_AUDIODRIVER')
                 for key in list(os.environ.keys()):
-                    if key.startswith('SDL_'):
+                    if key.startswith('SDL_') and key != 'SDL_AUDIODRIVER':
                         del os.environ[key]
+                if saved_sdl_audio:
+                    os.environ['SDL_AUDIODRIVER'] = saved_sdl_audio
                 if 'DISPLAY' in os.environ:
                     del os.environ['DISPLAY']
 
