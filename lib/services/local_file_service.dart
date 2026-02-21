@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../models/media_item.dart';
@@ -20,9 +21,11 @@ class LocalFileService {
       if (!await cacheDirObj.exists()) {
         await cacheDirObj.create(recursive: true);
       }
+      debugPrint('[LocalFileService] Cache dir: $_cacheDir');
     } catch (e) {
       // Fallback to relative path
       _cacheDir = './media';
+      debugPrint('[LocalFileService] Using fallback: $_cacheDir');
     }
   }
 
@@ -30,20 +33,30 @@ class LocalFileService {
   Future<List<MediaItem>> scanLocalFiles(List<String> supportedFormats) async {
     final List<MediaItem> items = [];
 
+    debugPrint('[LocalFileService] Scanning for local files...');
+
     // Try primary cache directory first
+    debugPrint('[LocalFileService] Trying primary: $_cacheDir');
     items.addAll(await _scanDirectory(_cacheDir, supportedFormats));
+    debugPrint('[LocalFileService] Found ${items.length} files in primary');
 
     // If no files found and in development, try relative ./media directory
     if (items.isEmpty) {
+      debugPrint('[LocalFileService] Trying fallback: ./media');
       items.addAll(await _scanDirectory('./media', supportedFormats));
+      debugPrint('[LocalFileService] Found ${items.length} files in ./media');
     }
 
     // If still no files, try current working directory + media
     if (items.isEmpty) {
       final cwd = Directory.current.path;
-      items.addAll(await _scanDirectory(p.join(cwd, 'media'), supportedFormats));
+      final cwdMedia = p.join(cwd, 'media');
+      debugPrint('[LocalFileService] Trying CWD: $cwdMedia');
+      items.addAll(await _scanDirectory(cwdMedia, supportedFormats));
+      debugPrint('[LocalFileService] Found ${items.length} files in CWD/media');
     }
 
+    debugPrint('[LocalFileService] Total files found: ${items.length}');
     return items;
   }
 
@@ -55,11 +68,15 @@ class LocalFileService {
       final cacheDirObj = Directory(dirPath);
 
       if (!await cacheDirObj.exists()) {
+        debugPrint('[LocalFileService] Directory not found: $dirPath');
         return items;
       }
 
+      debugPrint('[LocalFileService] Scanning: $dirPath');
+
       // List all files in the directory
       final entities = await cacheDirObj.list().toList();
+      debugPrint('[LocalFileService] Found ${entities.length} entities');
 
       for (final entity in entities) {
         if (entity is File) {
@@ -69,8 +86,11 @@ class LocalFileService {
           // Get file extension
           final ext = p.extension(path).toLowerCase();
 
+          debugPrint('[LocalFileService] File: $name (ext: $ext)');
+
           // Check if file is supported
           if (!supportedFormats.contains(ext)) {
+            debugPrint('[LocalFileService] Skipping unsupported: $ext');
             continue;
           }
 
@@ -96,6 +116,7 @@ class LocalFileService {
             isVideo: isVideo,
             isDownloaded: true,
           ));
+          debugPrint('[LocalFileService] Added: $name');
         }
       }
 
