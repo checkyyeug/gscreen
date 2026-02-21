@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
 Slideshow Display Module
-Displays images on HDMI output
-Auto-detects best display method (framebuffer or X11)
-With status bar showing file info, system info, etc.
+Cross-platform media slideshow display
+
+Platforms:
+  - Linux: Supports framebuffer (KMSDRM), X11
+  - Windows: DirectX via SDL
+  - macOS: Cocoa via SDL
+
+Features:
+  - Image slideshow with configurable intervals
+  - Video playback with audio
+  - Status bar with file info, system info, progress
+  - Software/hardware rotation support
 """
 
 import os
@@ -816,6 +825,7 @@ class SlideshowDisplay:
 
     def init_display(self):
         """Initialize pygame display with auto-detection"""
+        import sys
         pg = get_pygame()
         if pg is None:
             raise ImportError("pygame-ce is not installed. Install with: pip install pygame-ce")
@@ -826,27 +836,36 @@ class SlideshowDisplay:
         # Try different display drivers in order
         drivers_to_try = []
 
-        x11_running = self._is_x11_running()
-        if x11_running:
-            logger.info("X11 detected, will try X11 driver first")
-        else:
-            logger.info("No X11 detected, will try KMSDRM driver first")
+        # Platform-specific driver selection
+        if sys.platform == 'win32':
+            # Windows: Use SDL default (DirectX/Windows API)
+            logger.info("Windows detected, using SDL default driver")
+        elif sys.platform == 'darwin':
+            # macOS: Use SDL default (Cocoa/Quartz)
+            logger.info("macOS detected, using SDL default driver")
+        elif sys.platform.startswith('linux'):
+            # Linux: Try KMSDRM, fbcon, X11 based on availability
+            x11_running = self._is_x11_running()
+            if x11_running:
+                logger.info("X11 detected, will try X11 driver first")
+            else:
+                logger.info("No X11 detected, will try KMSDRM driver first")
 
-        # Priority: KMSDRM (modern framebuffer) > fbcon > x11
-        def _init_kmsdrm():
-            logger.info("Trying KMSDRM driver... (mouse: hidden)")
-            os.environ['SDL_VIDEODRIVER'] = 'kmsdrm'
-            os.environ['SDL_NOMOUSE'] = '1'
-            return True
+            # Priority: KMSDRM (modern framebuffer) > fbcon > x11
+            def _init_kmsdrm():
+                logger.info("Trying KMSDRM driver... (mouse: hidden)")
+                os.environ['SDL_VIDEODRIVER'] = 'kmsdrm'
+                os.environ['SDL_NOMOUSE'] = '1'
+                return True
 
-        if not x11_running:
-            drivers_to_try.append(('kmsdrm', _init_kmsdrm))
-            drivers_to_try.append(('fbcon', self._init_display_framebuffer))
-            drivers_to_try.append(('x11', self._init_display_x11))
-        else:
-            drivers_to_try.append(('x11', self._init_display_x11))
-            drivers_to_try.append(('kmsdrm', _init_kmsdrm))
-            drivers_to_try.append(('fbcon', self._init_display_framebuffer))
+            if not x11_running:
+                drivers_to_try.append(('kmsdrm', _init_kmsdrm))
+                drivers_to_try.append(('fbcon', self._init_display_framebuffer))
+                drivers_to_try.append(('x11', self._init_display_x11))
+            else:
+                drivers_to_try.append(('x11', self._init_display_x11))
+                drivers_to_try.append(('kmsdrm', _init_kmsdrm))
+                drivers_to_try.append(('fbcon', self._init_display_framebuffer))
 
         # Always try SDL's default auto-detection as last resort
         def _init_sdl_default():
