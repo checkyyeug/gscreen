@@ -20,6 +20,19 @@ media/
 *.swp
 *.swo
 
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+.pub/
+*.iml
+*.apk
+*.aab
+
 # OS
 .DS_Store
 Thumbs.db
