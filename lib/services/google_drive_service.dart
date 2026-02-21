@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../models/media_item.dart';
@@ -17,10 +18,12 @@ class GoogleDriveService {
 
   void setAccessToken(String token) {
     _accessToken = token;
+    debugPrint('[GoogleDriveService] Access token set: ${token.substring(0, 20)}...');
   }
 
   void setFolderId(String folderId) {
     _folderId = folderId;
+    debugPrint('[GoogleDriveService] Folder ID set: $folderId');
   }
 
   Future<void> initCacheDirectory() async {
@@ -40,22 +43,34 @@ class GoogleDriveService {
 
   /// Extract folder ID from Google Drive URL
   String? extractFolderId(String url) {
+    debugPrint('[GoogleDriveService] Extracting folder ID from URL: $url');
+
     // Handle URLs like:
     // https://drive.google.com/drive/folders/YOUR_FOLDER_ID
     // https://drive.google.com/open?id=YOUR_FOLDER_ID
     final folderMatch = RegExp(r'/folders/([a-zA-Z0-9_-]+)').firstMatch(url);
     if (folderMatch != null) {
-      return folderMatch.group(1);
+      final folderId = folderMatch.group(1);
+      debugPrint('[GoogleDriveService] Found folder ID via /folders/ pattern: $folderId');
+      return folderId;
     }
     final idMatch = RegExp(r'[?&]id=([a-zA-Z0-9_-]+)').firstMatch(url);
     if (idMatch != null) {
-      return idMatch.group(1);
+      final folderId = idMatch.group(1);
+      debugPrint('[GoogleDriveService] Found folder ID via id= pattern: $folderId');
+      return folderId;
     }
+
+    debugPrint('[GoogleDriveService] Could not extract folder ID from URL');
     return null;
   }
 
   /// Fetch list of files from Google Drive folder
   Future<List<MediaItem>> fetchFiles() async {
+    debugPrint('[GoogleDriveService] fetchFiles called');
+    debugPrint('[GoogleDriveService] Access token: ${_accessToken != null ? "SET" : "NULL"}');
+    debugPrint('[GoogleDriveService] Folder ID: ${_folderId ?? "NULL"}');
+
     if (_accessToken == null || _folderId == null) {
       throw Exception('Access token or folder ID not set');
     }
@@ -64,21 +79,25 @@ class GoogleDriveService {
 
     try {
       // Get files in the folder
+      final apiUrl = '$_driveApiBase/files?q="$_folderId"+in+parents+and+trashed=false'
+          '&fields=files(id,name,mimeType,modifiedTime,fileSize,thumbnailLink,webContentLink)';
+      debugPrint('[GoogleDriveService] API Request: $apiUrl');
+
       final response = await http.get(
-        Uri.parse(
-          '$_driveApiBase/files?q="$_folderId"+in+parents+and+trashed=false'
-          '&fields=files(id,name,mimeType,modifiedTime,fileSize,thumbnailLink,webContentLink)',
-        ),
+        Uri.parse(apiUrl),
         headers: {'Authorization': 'Bearer $_accessToken'},
       );
 
+      debugPrint('[GoogleDriveService] API Response status: ${response.statusCode}');
       if (response.statusCode != 200) {
+        debugPrint('[GoogleDriveService] API Response body: ${response.body}');
         throw Exception('Failed to fetch files: ${response.body}');
       }
 
       // Parse JSON properly
       final Map<String, dynamic> data = jsonDecode(response.body);
       final List<dynamic> files = data['files'] as List<dynamic>? ?? [];
+      debugPrint('[GoogleDriveService] Found ${files.length} files in response');
 
       for (final file in files) {
         final fileMap = file as Map<String, dynamic>;
