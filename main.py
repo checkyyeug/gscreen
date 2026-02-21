@@ -226,15 +226,16 @@ def main():
     hw_info = run_hardware_detection(settings)
     print_config_recommendations(hw_info)
 
-    # Auto-adjust settings for RPi 3 (limited hardware acceleration)
-    if hw_info.rpi_generation == 3:
+    # Auto-adjust settings for RPi 3 (limited hardware acceleration) - Linux only
+    if sys.platform.startswith('linux') and hw_info.rpi_generation == 3:
         if settings.get('display', {}).get('hw_accel', 'auto') not in ['none', False]:
             logger.info("RPi 3 detected: Auto-disabling hardware acceleration")
             settings['display']['hw_accel'] = 'none'
 
-    # Check framebuffer access
-    if not check_framebuffer():
-        sys.exit(1)
+    # Check framebuffer access (Linux only)
+    if sys.platform.startswith('linux'):
+        if not check_framebuffer():
+            sys.exit(1)
 
     # Note: hdmi_port setting is kept for compatibility but not used in framebuffer mode
     # The system will use /dev/fb0 which corresponds to the active HDMI output

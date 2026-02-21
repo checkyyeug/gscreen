@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Hardware Detection Module for gScreen
-Detects Raspberry Pi model, audio system, and hardware acceleration capabilities.
-Generates configuration recommendations for optimal playback.
+Cross-platform hardware detection for Windows, Linux, macOS.
+Detects platform, audio system, and hardware acceleration capabilities.
 """
 
 import os
+import platform
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
 
@@ -15,13 +17,15 @@ from typing import Optional, List, Tuple
 @dataclass
 class HardwareInfo:
     """Stores hardware detection results"""
-    rpi_model: str = "Unknown"
-    rpi_generation: int = 0  # 3, 4, or 5
-    audio_system: str = "unknown"  # alsa, pulseaudio, pipewire
+    platform: str = "unknown"  # windows, linux, darwin
+    platform_display: str = "Unknown"
+    rpi_model: str = "N/A"
+    rpi_generation: int = 0  # 0 = not a Pi, 3, 4, or 5
+    audio_system: str = "unknown"  # alsa, pulseaudio, pipewire, wasapi, coreaudio
     hdmi_audio_card: Optional[str] = None
     headphone_available: bool = False
     hw_accel_available: bool = False
-    hw_accel_method: str = "none"  # none, v4l2m2m, drm
+    hw_accel_method: str = "none"  # none, v4l2m2m, drm, d3d11va, videotoolbox
     recommendations: List[Tuple[str, str, str, str]] = field(default_factory=list)  # (key, current, recommended, status)
     warnings: List[str] = field(default_factory=list)
     suggestions: List[str] = field(default_factory=list)
@@ -33,18 +37,84 @@ class HardwareDetector:
     def __init__(self, settings: dict):
         self.settings = settings
         self.info = HardwareInfo()
+        self._detect_platform()
+
+    def _detect_platform(self) -> None:
+        """Detect the current platform"""
+        self.info.platform = sys.platform
+        if sys.platform == 'win32':
+            self.info.platform_display = "Windows"
+        elif sys.platform == 'darwin':
+            self.info.platform_display = "macOS"
+        elif sys.platform.startswith('linux'):
+            self.info.platform_display = "Linux"
+        else:
+            self.info.platform_display = f"Unknown ({sys.platform})"
 
     def detect_all(self) -> HardwareInfo:
         """Run all hardware detection"""
+        # Platform-specific detection
+        if sys.platform.startswith('linux'):
+            self._detect_linux()
+        elif sys.platform == 'win32':
+            self._detect_windows()
+        elif sys.platform == 'darwin':
+            self._detect_macos()
+
+        self._detect_ffmpeg()
+        self._generate_recommendations()
+        return self.info
+
+    def _detect_linux(self) -> None:
+        """Linux-specific hardware detection"""
         self._detect_rpi_model()
         self._detect_audio_system()
         self._detect_audio_devices()
         self._detect_hw_accel()
-        self._generate_recommendations()
-        return self.info
+
+    def _detect_windows(self) -> None:
+        """Windows-specific hardware detection"""
+        self.info.audio_system = "wasapi"
+        self.info.hw_accel_method = "d3d11va"
+
+        # Try to detect hardware acceleration
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-hwaccels'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            if result.returncode == 0:
+                hwaccels = result.stdout.lower()
+                if 'd3d11va' in hwaccels or 'dxva2' in hwaccels:
+                    self.info.hw_accel_available = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    def _detect_macos(self) -> None:
+        """macOS-specific hardware detection"""
+        self.info.audio_system = "coreaudio"
+        self.info.hw_accel_method = "videotoolbox"
+
+        # Try to detect hardware acceleration
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-hwaccels'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                hwaccels = result.stdout.lower()
+                if 'videotoolbox' in hwaccels:
+                    self.info.hw_accel_available = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
 
     def _detect_rpi_model(self) -> None:
-        """Detect Raspberry Pi model from /proc/cpuinfo"""
+        """Detect Raspberry Pi model from /proc/cpuinfo (Linux only)"""
         try:
             with open('/proc/cpuinfo', 'r') as f:
                 cpuinfo = f.read()
@@ -74,11 +144,11 @@ class HardwareDetector:
                 self.info.rpi_generation = 1
 
         except (FileNotFoundError, PermissionError):
-            self.info.rpi_model = "Unknown (not a Raspberry Pi?)"
+            self.info.rpi_model = "Not a Raspberry Pi"
             self.info.rpi_generation = 0
 
     def _detect_audio_system(self) -> None:
-        """Detect audio system (ALSA, PulseAudio, PipeWire)"""
+        """Detect audio system on Linux (ALSA, PulseAudio, PipeWire)"""
         # Check for PipeWire first (newest)
         try:
             result = subprocess.run(['pw-cli', '--version'], capture_output=True, timeout=2)
@@ -101,7 +171,7 @@ class HardwareDetector:
         self.info.audio_system = "alsa"
 
     def _detect_audio_devices(self) -> None:
-        """Detect available audio devices"""
+        """Detect available audio devices on Linux"""
         try:
             result = subprocess.run(
                 ['aplay', '-l'],
@@ -126,7 +196,7 @@ class HardwareDetector:
             pass
 
     def _detect_hw_accel(self) -> None:
-        """Detect hardware video acceleration capabilities"""
+        """Detect hardware video acceleration capabilities on Linux"""
         # Check for v4l2m2m support
         try:
             result = subprocess.run(
@@ -154,11 +224,36 @@ class HardwareDetector:
             self.info.hw_accel_available = False
             self.info.hw_accel_method = 'none'
 
+    def _detect_ffmpeg(self) -> None:
+        """Check if ffmpeg is available (all platforms)"""
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-version'],
+                capture_output=True,
+                timeout=5,
+                # On Windows, suppress the console window
+                **({'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32' else {})
+            )
+            if result.returncode != 0:
+                self.info.warnings.append("ffmpeg not found - video playback may not work")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            self.info.warnings.append("ffmpeg not found - video playback may not work")
+
     def _generate_recommendations(self) -> None:
         """Generate configuration recommendations based on detected hardware"""
         display_settings = self.settings.get('display', {})
         audio_settings = self.settings.get('audio', {})
 
+        # Platform-specific recommendations
+        if sys.platform.startswith('linux'):
+            self._generate_linux_recommendations(display_settings, audio_settings)
+        elif sys.platform == 'win32':
+            self._generate_windows_recommendations(display_settings)
+        elif sys.platform == 'darwin':
+            self._generate_macos_recommendations(display_settings)
+
+    def _generate_linux_recommendations(self, display_settings: dict, audio_settings: dict) -> None:
+        """Generate recommendations for Linux"""
         # HW acceleration recommendation
         current_hw_accel = display_settings.get('hw_accel', 'auto')
         if self.info.rpi_generation == 3:
@@ -211,13 +306,54 @@ class HardwareDetector:
                 "Using ALSA directly. ALSA warning messages are harmless."
             )
 
+    def _generate_windows_recommendations(self, display_settings: dict) -> None:
+        """Generate recommendations for Windows"""
+        current_hw_accel = display_settings.get('hw_accel', 'auto')
+        if self.info.hw_accel_available:
+            self.info.recommendations.append(
+                ('display.hw_accel', str(current_hw_accel), 'auto', 'OK')
+            )
+        else:
+            self.info.recommendations.append(
+                ('display.hw_accel', str(current_hw_accel), 'none', 'OK')
+            )
+
+        self.info.recommendations.append(
+            ('SDL_AUDIODRIVER', 'wasapi', 'wasapi', 'INFO')
+        )
+
+        self.info.suggestions.append(
+            "Windows detected. Using WASAPI for audio and DirectX for video acceleration."
+        )
+
+    def _generate_macos_recommendations(self, display_settings: dict) -> None:
+        """Generate recommendations for macOS"""
+        current_hw_accel = display_settings.get('hw_accel', 'auto')
+        if self.info.hw_accel_available:
+            self.info.recommendations.append(
+                ('display.hw_accel', str(current_hw_accel), 'auto', 'OK')
+            )
+        else:
+            self.info.recommendations.append(
+                ('display.hw_accel', str(current_hw_accel), 'none', 'OK')
+            )
+
+        self.info.recommendations.append(
+            ('SDL_AUDIODRIVER', 'coreaudio', 'coreaudio', 'INFO')
+        )
+
+        self.info.suggestions.append(
+            "macOS detected. Using CoreAudio for audio and VideoToolbox for video acceleration."
+        )
+
 
 def suppress_alsa_messages() -> None:
-    """Apply environment variables to suppress ALSA messages"""
-    os.environ['ALSA_CONFIG_PATH'] = '/dev/null'
-    # Keep PYTHONWARNINGS if not already set
-    if 'PYTHONWARNINGS' not in os.environ:
-        os.environ['PYTHONWARNINGS'] = 'ignore'
+    """Apply environment variables to suppress ALSA messages (Linux only)"""
+    if sys.platform.startswith('linux'):
+        os.environ['ALSA_CONFIG_PATH'] = '/dev/null'
+        # Keep PYTHONWARNINGS if not already set
+        if 'PYTHONWARNINGS' not in os.environ:
+            os.environ['PYTHONWARNINGS'] = 'ignore'
 
 
 def run_hardware_detection(settings: dict) -> HardwareInfo:
@@ -234,31 +370,46 @@ def print_config_recommendations(hw_info: HardwareInfo) -> None:
     print("=" * 60)
     print()
 
-    # Hardware section
-    print("[Hardware]")
-    print(f"  Model:         {hw_info.rpi_model}")
-    gen_name = f"Raspberry Pi {hw_info.rpi_generation}" if hw_info.rpi_generation else "Unknown"
-    print(f"  Generation:    {gen_name}")
-    accel_status = hw_info.hw_accel_method if hw_info.hw_accel_available else "Not available"
-    print(f"  HW Accel:      {accel_status}")
+    # Platform section
+    print("[Platform]")
+    print(f"  OS:            {hw_info.platform_display}")
     print()
 
-    # Audio section
-    print("[Audio System]")
-    print(f"  System:        {hw_info.audio_system}")
-    hdmi_audio = hw_info.hdmi_audio_card or "Not detected"
-    print(f"  HDMI Audio:    {hdmi_audio}")
-    headphone = "Available" if hw_info.headphone_available else "Not available"
-    print(f"  Headphone:     {headphone}")
-    print()
+    # Hardware section (Linux/RPi specific)
+    if sys.platform.startswith('linux'):
+        print("[Hardware]")
+        if hw_info.rpi_generation > 0:
+            print(f"  Model:         {hw_info.rpi_model}")
+            gen_name = f"Raspberry Pi {hw_info.rpi_generation}"
+            print(f"  Generation:    {gen_name}")
+        else:
+            print(f"  Model:         {hw_info.rpi_model}")
+        accel_status = hw_info.hw_accel_method if hw_info.hw_accel_available else "Not available"
+        print(f"  HW Accel:      {accel_status}")
+        print()
+
+        # Audio section (Linux specific)
+        print("[Audio System]")
+        print(f"  System:        {hw_info.audio_system}")
+        hdmi_audio = hw_info.hdmi_audio_card or "Not detected"
+        print(f"  HDMI Audio:    {hdmi_audio}")
+        headphone = "Available" if hw_info.headphone_available else "Not available"
+        print(f"  Headphone:     {headphone}")
+        print()
+    else:
+        # Non-Linux platform info
+        print("[Hardware]")
+        print(f"  HW Accel:      {hw_info.hw_accel_method}")
+        print()
 
     # Recommendations section
-    print("[Configuration Recommendations]")
-    print("-" * 40)
-    for key, current, recommended, status in hw_info.recommendations:
-        status_display = f"[{status}]"
-        print(f"  {key:<22} '{current}' -> '{recommended}' {status_display}")
-    print()
+    if hw_info.recommendations:
+        print("[Configuration Recommendations]")
+        print("-" * 40)
+        for key, current, recommended, status in hw_info.recommendations:
+            status_display = f"[{status}]"
+            print(f"  {key:<22} '{current}' -> '{recommended}' {status_display}")
+        print()
 
     # Warnings section
     if hw_info.warnings:
