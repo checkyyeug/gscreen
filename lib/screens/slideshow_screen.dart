@@ -179,16 +179,14 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
   }
 
   Widget _buildNoMediaOverlay(SlideshowProvider provider) {
-    final isLocal = provider.useLocalFiles;
-
     return Container(
       color: Colors.black87,
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              isLocal ? Icons.folder_open : Icons.cloud_off,
+            const Icon(
+              Icons.folder_open,
               color: Colors.white54,
               size: 80,
             ),
@@ -201,20 +199,15 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              isLocal
-                  ? 'Add media files to the ./media folder'
-                  : 'Add files to your Google Drive folder',
-              style: const TextStyle(color: Colors.white54),
+            const Text(
+              'Run sync.bat to download files from Google Drive',
+              style: TextStyle(color: Colors.white54),
             ),
-            if (isLocal)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Current folder: ${provider.settings.googleDriveUrl.isEmpty ? "./media" : provider.settings.googleDriveUrl}',
-                  style: const TextStyle(color: Colors.white38, fontSize: 12),
-                ),
-              ),
+            const SizedBox(height: 8),
+            Text(
+              'Or add media files to the media folder',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
             const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -222,7 +215,7 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
                 ElevatedButton.icon(
                   onPressed: () => provider.syncMedia(),
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Sync Now'),
+                  label: const Text('Rescan'),
                 ),
                 const SizedBox(width: 16),
                 OutlinedButton.icon(

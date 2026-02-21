@@ -80,28 +80,14 @@ class SlideshowProvider extends ChangeNotifier {
     try {
       // Load settings
       _settings = await _settingsService.loadSettings();
-      debugPrint('[SlideshowProvider] Settings loaded, googleDriveUrl: "${_settings.googleDriveUrl}"');
+      debugPrint('[SlideshowProvider] Settings loaded');
 
       // Initialize local file service
       await _localFileService.initCacheDirectory();
 
-      // Initialize drive service
-      await _driveService.initCacheDirectory();
-
-      // Extract folder ID from URL
-      bool hasDriveConfig = false;
-      if (_settings.googleDriveUrl.isNotEmpty) {
-        final folderId = _driveService.extractFolderId(_settings.googleDriveUrl);
-        debugPrint('[SlideshowProvider] Extracted folderId: $folderId');
-        if (folderId != null) {
-          _driveService.setFolderId(folderId);
-          hasDriveConfig = true;
-        }
-      }
-
-      // Determine if we should use local files (no Drive config)
-      _useLocalFiles = !hasDriveConfig;
-      debugPrint('[SlideshowProvider] _useLocalFiles: $_useLocalFiles');
+      // Always use local files (sync.bat handles Google Drive)
+      _useLocalFiles = true;
+      debugPrint('[SlideshowProvider] Using local files mode');
 
       _state = SlideshowState.idle;
       notifyListeners();
@@ -257,48 +243,21 @@ class SlideshowProvider extends ChangeNotifier {
     }
   }
 
-  /// Sync media from Google Drive or local files
+  /// Sync media from local directory
+  /// Note: Use sync.bat to download files from Google Drive
   Future<void> syncMedia({bool forceDownload = false}) async {
     if (_isSyncing) return;
 
-    debugPrint('[SlideshowProvider] syncMedia called, _useLocalFiles: $_useLocalFiles');
+    debugPrint('[SlideshowProvider] Scanning local media files');
 
     _isSyncing = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      if (_useLocalFiles) {
-        // Use local file scanner
-        debugPrint('[SlideshowProvider] Using local file scanner');
-        _mediaItems = await _localFileService.scanLocalFiles(_settings.supportedFormats);
-        debugPrint('[SlideshowProvider] Found ${_mediaItems.length} local files');
-      } else {
-        // Use Google Drive
-        debugPrint('[SlideshowProvider] Using Google Drive');
-        final remoteFiles = await _driveService.fetchFiles();
-
-        // Filter supported formats
-        _mediaItems = remoteFiles.where((item) {
-          final ext = item.extension;
-          return _settings.supportedFormats.contains(ext);
-        }).toList();
-
-        // Sort by modified time
-        _mediaItems.sort((a, b) {
-          if (a.modifiedTime == null || b.modifiedTime == null) return 0;
-          return b.modifiedTime!.compareTo(a.modifiedTime!);
-        });
-
-        // Check local files
-        for (int i = 0; i < _mediaItems.length; i++) {
-          final item = _mediaItems[i];
-          final file = File(item.localPath);
-          if (await file.exists()) {
-            _mediaItems[i] = item.copyWith(isDownloaded: true);
-          }
-        }
-      }
+      // Scan local files
+      _mediaItems = await _localFileService.scanLocalFiles(_settings.supportedFormats);
+      debugPrint('[SlideshowProvider] Found ${_mediaItems.length} local files');
 
       _lastSyncTime = DateTime.now();
       _isSyncing = false;
@@ -322,22 +281,11 @@ class SlideshowProvider extends ChangeNotifier {
     }
   }
 
-  /// Download current media item (only for Drive files)
+  /// Get current media item path (local files only)
   Future<String?> downloadCurrentMedia() async {
     if (currentItem == null) return null;
-
-    // Local files are already "downloaded"
-    if (_useLocalFiles || currentItem!.downloadUrl == null) {
-      return currentItem!.localPath;
-    }
-
-    try {
-      return await _driveService.downloadFile(currentItem!);
-    } catch (e) {
-      _errorMessage = e.toString();
-      notifyListeners();
-      return null;
-    }
+    // Local files are already available
+    return currentItem!.localPath;
   }
 
   void _startTimer() {
