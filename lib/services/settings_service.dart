@@ -26,58 +26,96 @@ class SettingsService {
   }
 
   /// Resolve file: prefix to actual URL from file
-  Future<String> _resolveFileUrl(String urlOrPath) async {
-    if (urlOrPath.startsWith('file:')) {
-      final filePath = urlOrPath.substring(5); // Remove 'file:' prefix
+  /// Tries multiple locations to find the URL file
+  Future<String> _resolveFileUrl(String urlOrPath, String settingsDir) async {
+    if (!urlOrPath.startsWith('file:')) {
+      return urlOrPath;
+    }
+
+    final filePath = urlOrPath.substring(5); // Remove 'file:' prefix
+
+    // List of paths to try for the URL file
+    final pathsToTry = <String>[];
+
+    // 1. Relative to settings file directory
+    pathsToTry.add(p.join(settingsDir, filePath));
+
+    // 2. Relative to current working directory
+    pathsToTry.add(filePath);
+
+    // 3. Try project directory (parent of settings if settings is in a subfolder)
+    final cwd = Directory.current.path;
+    pathsToTry.add(p.join(cwd, filePath));
+
+    // 4. Try Documents folder
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      pathsToTry.add(p.join(docsDir.path, filePath));
+    } catch (e) {
+      // Ignore
+    }
+
+    for (final path in pathsToTry) {
       try {
-        final file = File(filePath);
+        final file = File(path);
         if (await file.exists()) {
           final content = await file.readAsString();
-          return content.trim();
+          final url = content.trim();
+          debugPrint('[SettingsService] Loaded URL from: $path');
+          debugPrint('[SettingsService] URL: $url');
+          return url;
         }
       } catch (e) {
-        debugPrint('[SettingsService] Failed to read URL from $filePath: $e');
+        debugPrint('[SettingsService] Failed to read $path: $e');
       }
     }
-    return urlOrPath;
+
+    debugPrint('[SettingsService] Could not find URL file, tried: $pathsToTry');
+    return urlOrPath; // Return original if file not found
   }
 
   /// Load settings from file with fallback to project directory
   Future<AppSettings> loadSettings() async {
-    // Try multiple locations in order
-    final pathsToTry = <String>[];
+    // List of (settings_path, base_dir) tuples
+    // base_dir is used to resolve relative file: paths
+    final locationsToTry = <({String path, String baseDir})>[];
 
     // 1. Application documents directory
     try {
       final directory = await getApplicationDocumentsDirectory();
-      pathsToTry.add('${directory.path}/$_settingsFileName');
+      locationsToTry.add((
+        path: '${directory.path}/$_settingsFileName',
+        baseDir: directory.path
+      ));
     } catch (e) {
       // Ignore
     }
 
     // 2. Current working directory
-    pathsToTry.add('./$_settingsFileName');
+    locationsToTry.add((
+      path: './$_settingsFileName',
+      baseDir: Directory.current.path
+    ));
 
-    for (final path in pathsToTry) {
+    for (final location in locationsToTry) {
       try {
-        final file = File(path);
+        final file = File(location.path);
         if (await file.exists()) {
           final contents = await file.readAsString();
           final json = jsonDecode(contents) as Map<String, dynamic>;
 
           // Resolve file: prefix for google_drive_url
           if (json['google_drive_url'] is String) {
-            final resolvedUrl = await _resolveFileUrl(json['google_drive_url'] as String);
+            final rawUrl = json['google_drive_url'] as String;
+            final resolvedUrl = await _resolveFileUrl(rawUrl, location.baseDir);
             json['google_drive_url'] = resolvedUrl;
           }
 
-          debugPrint('[SettingsService] Loaded settings from: $path');
-          debugPrint('[SettingsService] googleDriveUrl: ${json['google_drive_url']}');
-
+          debugPrint('[SettingsService] Loaded settings from: ${location.path}');
           return AppSettings.fromJson(json);
         }
       } catch (e) {
-        debugPrint('[SettingsService] Failed to load $path: $e');
+        debugPrint('[SettingsService] Failed to load ${location.path}: $e');
       }
     }
 
