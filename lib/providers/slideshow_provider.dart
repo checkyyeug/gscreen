@@ -80,6 +80,7 @@ class SlideshowProvider extends ChangeNotifier {
     try {
       // Load settings
       _settings = await _settingsService.loadSettings();
+      debugPrint('[SlideshowProvider] Settings loaded, googleDriveUrl: "${_settings.googleDriveUrl}"');
 
       // Initialize local file service
       await _localFileService.initCacheDirectory();
@@ -91,6 +92,7 @@ class SlideshowProvider extends ChangeNotifier {
       bool hasDriveConfig = false;
       if (_settings.googleDriveUrl.isNotEmpty) {
         final folderId = _driveService.extractFolderId(_settings.googleDriveUrl);
+        debugPrint('[SlideshowProvider] Extracted folderId: $folderId');
         if (folderId != null) {
           _driveService.setFolderId(folderId);
           hasDriveConfig = true;
@@ -99,10 +101,12 @@ class SlideshowProvider extends ChangeNotifier {
 
       // Determine if we should use local files (no Drive config)
       _useLocalFiles = !hasDriveConfig;
+      debugPrint('[SlideshowProvider] _useLocalFiles: $_useLocalFiles');
 
       _state = SlideshowState.idle;
       notifyListeners();
     } catch (e) {
+      debugPrint('[SlideshowProvider] Init error: $e');
       _state = SlideshowState.error;
       _errorMessage = e.toString();
       notifyListeners();
@@ -257,6 +261,8 @@ class SlideshowProvider extends ChangeNotifier {
   Future<void> syncMedia({bool forceDownload = false}) async {
     if (_isSyncing) return;
 
+    debugPrint('[SlideshowProvider] syncMedia called, _useLocalFiles: $_useLocalFiles');
+
     _isSyncing = true;
     _errorMessage = null;
     notifyListeners();
@@ -264,9 +270,12 @@ class SlideshowProvider extends ChangeNotifier {
     try {
       if (_useLocalFiles) {
         // Use local file scanner
+        debugPrint('[SlideshowProvider] Using local file scanner');
         _mediaItems = await _localFileService.scanLocalFiles(_settings.supportedFormats);
+        debugPrint('[SlideshowProvider] Found ${_mediaItems.length} local files');
       } else {
         // Use Google Drive
+        debugPrint('[SlideshowProvider] Using Google Drive');
         final remoteFiles = await _driveService.fetchFiles();
 
         // Filter supported formats
@@ -296,15 +305,19 @@ class SlideshowProvider extends ChangeNotifier {
 
       // Auto-start if enabled
       if (_settings.sync.downloadOnStart && _mediaItems.isNotEmpty) {
+        debugPrint('[SlideshowProvider] Auto-starting slideshow with ${_mediaItems.length} items');
         checkSchedule();
       } else if (_mediaItems.isEmpty) {
+        debugPrint('[SlideshowProvider] No media found, setting state to noMedia');
         _state = SlideshowState.noMedia;
       }
 
       notifyListeners();
     } catch (e) {
+      debugPrint('[SlideshowProvider] Sync error: $e');
       _isSyncing = false;
       _errorMessage = e.toString();
+      _state = SlideshowState.error;
       notifyListeners();
     }
   }
