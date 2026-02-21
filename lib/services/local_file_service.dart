@@ -1,30 +1,58 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../models/media_item.dart';
-import 'google_drive_service.dart';
 
 /// Service for loading local media files from the cache directory
 class LocalFileService {
-  final String _cacheDir;
-
-  LocalFileService({String? cacheDir}) : _cacheDir = cacheDir ?? './media';
+  String _cacheDir = './media';
 
   /// Get cache directory path
   String get cacheDir => _cacheDir;
 
   /// Initialize cache directory
   Future<void> initCacheDirectory() async {
-    final cacheDirObj = Directory(_cacheDir);
-    if (!await cacheDirObj.exists()) {
-      await cacheDirObj.create(recursive: true);
+    try {
+      // Use the same directory as GoogleDriveService
+      final directory = await getApplicationDocumentsDirectory();
+      _cacheDir = p.join(directory.path, 'media');
+      final cacheDirObj = Directory(_cacheDir);
+      if (!await cacheDirObj.exists()) {
+        await cacheDirObj.create(recursive: true);
+      }
+    } catch (e) {
+      // Fallback to relative path
+      _cacheDir = './media';
     }
   }
 
-  /// Scan local directory for media files
+  /// Also try to scan from a fallback directory (for development)
   Future<List<MediaItem>> scanLocalFiles(List<String> supportedFormats) async {
     final List<MediaItem> items = [];
 
+    // Try primary cache directory first
+    items.addAll(await _scanDirectory(_cacheDir, supportedFormats));
+
+    // If no files found and in development, try relative ./media directory
+    if (items.isEmpty) {
+      items.addAll(await _scanDirectory('./media', supportedFormats));
+    }
+
+    // If still no files, try current working directory + media
+    if (items.isEmpty) {
+      final cwd = Directory.current.path;
+      items.addAll(await _scanDirectory(p.join(cwd, 'media'), supportedFormats));
+    }
+
+    return items;
+  }
+
+  /// Scan a specific directory for media files
+  Future<List<MediaItem>> _scanDirectory(String dirPath, List<String> supportedFormats) async {
+    final List<MediaItem> items = [];
+
     try {
-      final cacheDirObj = Directory(_cacheDir);
+      final cacheDirObj = Directory(dirPath);
 
       if (!await cacheDirObj.exists()) {
         return items;
@@ -36,11 +64,10 @@ class LocalFileService {
       for (final entity in entities) {
         if (entity is File) {
           final path = entity.path;
-          final name = entity.uri.pathSegments.last;
+          final name = p.basename(path);
 
           // Get file extension
-          final dotIndex = name.lastIndexOf('.');
-          final ext = dotIndex != -1 ? name.substring(dotIndex).toLowerCase() : '';
+          final ext = p.extension(path).toLowerCase();
 
           // Check if file is supported
           if (!supportedFormats.contains(ext)) {
@@ -54,13 +81,12 @@ class LocalFileService {
           final isVideo = ['.mp4', '.avi', '.mov', '.mkv', '.webm'].contains(ext);
 
           // Create a MediaItem for local file
-          // Use filename as ID for local files
           final id = name.hashCode.toString();
 
           items.add(MediaItem(
             id: id,
             name: name,
-            downloadUrl: null, // No download URL for local files
+            downloadUrl: null,
             webContentLink: null,
             modifiedTime: stat.modified,
             fileSize: stat.size,
@@ -68,7 +94,7 @@ class LocalFileService {
             thumbnailLink: null,
             localPath: path,
             isVideo: isVideo,
-            isDownloaded: true, // Local files are always "downloaded"
+            isDownloaded: true,
           ));
         }
       }
@@ -80,7 +106,7 @@ class LocalFileService {
       });
 
     } catch (e) {
-      throw Exception('Error scanning local files: $e');
+      // Silently fail for fallback directories
     }
 
     return items;
