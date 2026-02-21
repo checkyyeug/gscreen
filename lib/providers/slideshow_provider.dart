@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../models/media_item.dart';
 import '../models/app_settings.dart';
 import '../services/google_drive_service.dart';
+import '../services/local_file_service.dart';
 import '../services/settings_service.dart';
 
 /// Slideshow state
@@ -20,6 +21,7 @@ enum SlideshowState {
 /// Provider for slideshow state and logic
 class SlideshowProvider extends ChangeNotifier {
   final GoogleDriveService _driveService;
+  final LocalFileService _localFileService;
   final SettingsService _settingsService;
 
   // State
@@ -31,6 +33,7 @@ class SlideshowProvider extends ChangeNotifier {
   Timer? _slideshowTimer;
   bool _isSyncing = false;
   DateTime? _lastSyncTime;
+  bool _useLocalFiles = false; // Whether to use local files instead of Drive
 
   // Countdown
   int _countdownSeconds = 0;
@@ -45,7 +48,7 @@ class SlideshowProvider extends ChangeNotifier {
           ? _mediaItems[_currentIndex]
           : null;
   AppSettings get settings => _settings;
-  
+
   set settings(AppSettings newSettings) {
     _settings = newSettings;
     notifyListeners();
@@ -55,6 +58,7 @@ class SlideshowProvider extends ChangeNotifier {
   DateTime? get lastSyncTime => _lastSyncTime;
   int get countdownSeconds => _countdownSeconds;
   int get totalItems => _mediaItems.length;
+  bool get useLocalFiles => _useLocalFiles;
 
   // Progress info
   String get progressText =>
@@ -62,8 +66,10 @@ class SlideshowProvider extends ChangeNotifier {
 
   SlideshowProvider({
     GoogleDriveService? driveService,
+    LocalFileService? localFileService,
     SettingsService? settingsService,
   })  : _driveService = driveService ?? GoogleDriveService(),
+        _localFileService = localFileService ?? LocalFileService(),
         _settingsService = settingsService ?? SettingsService();
 
   /// Initialize the provider
@@ -75,16 +81,24 @@ class SlideshowProvider extends ChangeNotifier {
       // Load settings
       _settings = await _settingsService.loadSettings();
 
+      // Initialize local file service
+      await _localFileService.initCacheDirectory();
+
       // Initialize drive service
       await _driveService.initCacheDirectory();
 
       // Extract folder ID from URL
+      bool hasDriveConfig = false;
       if (_settings.googleDriveUrl.isNotEmpty) {
         final folderId = _driveService.extractFolderId(_settings.googleDriveUrl);
         if (folderId != null) {
           _driveService.setFolderId(folderId);
+          hasDriveConfig = true;
         }
       }
+
+      // Determine if we should use local files (no Drive config)
+      _useLocalFiles = !hasDriveConfig;
 
       _state = SlideshowState.idle;
       notifyListeners();
@@ -105,7 +119,10 @@ class SlideshowProvider extends ChangeNotifier {
       final folderId = _driveService.extractFolderId(newSettings.googleDriveUrl);
       if (folderId != null) {
         _driveService.setFolderId(folderId);
+        _useLocalFiles = false;
       }
+    } else {
+      _useLocalFiles = true;
     }
 
     notifyListeners();
@@ -114,6 +131,7 @@ class SlideshowProvider extends ChangeNotifier {
   /// Set Google Drive access token
   void setAccessToken(String token) {
     _driveService.setAccessToken(token);
+    _useLocalFiles = false;
   }
 
   /// Start slideshow
@@ -235,7 +253,7 @@ class SlideshowProvider extends ChangeNotifier {
     }
   }
 
-  /// Sync media from Google Drive
+  /// Sync media from Google Drive or local files
   Future<void> syncMedia({bool forceDownload = false}) async {
     if (_isSyncing) return;
 
@@ -244,27 +262,32 @@ class SlideshowProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Fetch remote files
-      final remoteFiles = await _driveService.fetchFiles();
+      if (_useLocalFiles) {
+        // Use local file scanner
+        _mediaItems = await _localFileService.scanLocalFiles(_settings.supportedFormats);
+      } else {
+        // Use Google Drive
+        final remoteFiles = await _driveService.fetchFiles();
 
-      // Filter supported formats
-      _mediaItems = remoteFiles.where((item) {
-        final ext = item.extension;
-        return _settings.supportedFormats.contains(ext);
-      }).toList();
+        // Filter supported formats
+        _mediaItems = remoteFiles.where((item) {
+          final ext = item.extension;
+          return _settings.supportedFormats.contains(ext);
+        }).toList();
 
-      // Sort by modified time
-      _mediaItems.sort((a, b) {
-        if (a.modifiedTime == null || b.modifiedTime == null) return 0;
-        return b.modifiedTime!.compareTo(a.modifiedTime!);
-      });
+        // Sort by modified time
+        _mediaItems.sort((a, b) {
+          if (a.modifiedTime == null || b.modifiedTime == null) return 0;
+          return b.modifiedTime!.compareTo(a.modifiedTime!);
+        });
 
-      // Check local files
-      for (int i = 0; i < _mediaItems.length; i++) {
-        final item = _mediaItems[i];
-        final file = File(item.localPath);
-        if (await file.exists()) {
-          _mediaItems[i] = item.copyWith(isDownloaded: true);
+        // Check local files
+        for (int i = 0; i < _mediaItems.length; i++) {
+          final item = _mediaItems[i];
+          final file = File(item.localPath);
+          if (await file.exists()) {
+            _mediaItems[i] = item.copyWith(isDownloaded: true);
+          }
         }
       }
 
@@ -286,9 +309,14 @@ class SlideshowProvider extends ChangeNotifier {
     }
   }
 
-  /// Download current media item
+  /// Download current media item (only for Drive files)
   Future<String?> downloadCurrentMedia() async {
     if (currentItem == null) return null;
+
+    // Local files are already "downloaded"
+    if (_useLocalFiles || currentItem!.downloadUrl == null) {
+      return currentItem!.localPath;
+    }
 
     try {
       return await _driveService.downloadFile(currentItem!);

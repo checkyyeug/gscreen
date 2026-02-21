@@ -179,14 +179,16 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
   }
 
   Widget _buildNoMediaOverlay(SlideshowProvider provider) {
+    final isLocal = provider.useLocalFiles;
+
     return Container(
       color: Colors.black87,
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.photo_library_outlined,
+            Icon(
+              isLocal ? Icons.folder_open : Icons.cloud_off,
               color: Colors.white54,
               size: 80,
             ),
@@ -199,10 +201,20 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Add files to your Google Drive folder',
-              style: TextStyle(color: Colors.white54),
+            Text(
+              isLocal
+                  ? 'Add media files to the ./media folder'
+                  : 'Add files to your Google Drive folder',
+              style: const TextStyle(color: Colors.white54),
             ),
+            if (isLocal)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Current folder: ${provider.settings.googleDriveUrl.isEmpty ? "./media" : provider.settings.googleDriveUrl}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ),
             const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
