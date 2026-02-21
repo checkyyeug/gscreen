@@ -1,11 +1,15 @@
-# gScreen - Google Drive Photo Slideshow for Raspberry Pi
+## gScreen - Google Drive Photo Slideshow
 
-A lightweight photo and video slideshow application that displays media from Google Drive on HDMI output.
+gScreen 是一个轻量级的照片和视频幻灯片应用程序，可在 HDMI 输出上显示来自 Google Drive 的媒体。
 
-**Auto-detects display mode** - Works on Raspberry Pi OS with or without desktop.
+**两个版本可选：**
+- **Python 版**：专为 Raspberry Pi 和 Linux 系统设计
+- **Flutter 版**：跨平台版本，支持 Windows、Android、Web 等
 
 ## Features
 
+- **Cross-platform support**: Python version for Raspberry Pi/Linux, Flutter version for Windows/Android/Web
+- **Flutter Edition**: New! Now available for Windows, Android, Chrome/Web
 - Displays media from Google Drive on HDMI output
 - **Auto-detects display mode**: X11 (with desktop) or framebuffer (headless)
 - Images scaled to fit/fill screen with aspect ratio preservation
@@ -62,7 +66,8 @@ For detailed documentation, see:
 
 ## Requirements
 
-- Raspberry Pi 3/4/5 (or any Linux system with HDMI output)
+- **Raspberry Pi 3/4/5** (or any Linux system with HDMI output) for Python version
+- **Windows/macOS/Linux** for Flutter version
 - **Minimum RAM: 1GB** (512MB may work with reduced functionality)
 - Python 3.8+
 - Internet connection for Google Drive sync

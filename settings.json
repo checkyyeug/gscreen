@@ -22,17 +22,17 @@
                 "file_info_position": "bottom"
             }
         },
-	#"hw_accel": "none"
+        "hw_accel": "none"
     },
     "slideshow": {
         "interval_seconds": 5,
         "scale_mode": "fit"
     },
     "schedule": {
-        "enabled": true,
+        "enabled": false,
         "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
         "start": "07:00",
-        "stop": "22:00"
+        "stop": "23:59"
     },
     "audio": {
         "enabled": true,
@@ -49,7 +49,7 @@
         "_comment": "System-level settings for SD card protection and maintenance",
         "weekly_auto_restart": true,
         "weekly_restart_day": "Sat",
-        "log_to_ram": true,
+        "log_to_ram": false,
         "ram_log_size_mb": 50,
         "enable_health_monitoring": true,
         "health_check_interval_hours": 6

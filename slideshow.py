@@ -1741,7 +1741,7 @@ class SlideshowDisplay:
 
                 while self.running:
                     # Handle events
-                    for event in pg.event.get(timeout=100):
+                    for event in pg.event.get():
                         if event.type == pg.QUIT:
                             self.running = False
                             return False
@@ -2360,7 +2360,7 @@ class SlideshowDisplay:
         while counting_down:
             try:
                 # Handle events - allow early exit with ESC
-                for event in pg.event.get(timeout=100):
+                for event in pg.event.get():
                     if event.type == pg.QUIT:
                         counting_down = False
                         self.running = False

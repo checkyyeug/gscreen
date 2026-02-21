@@ -161,6 +161,11 @@ def create_default_settings(path: str):
 
 def check_framebuffer():
     """Check if framebuffer is accessible"""
+    # On non-Linux systems (Windows, macOS), skip framebuffer check
+    if not sys.platform.startswith('linux'):
+        logger.info("Non-Linux platform detected, skipping framebuffer check")
+        return True
+    
     fb_device = '/dev/fb0'
     if not os.path.exists(fb_device):
         logger.error(f"Framebuffer device not found: {fb_device}")

@@ -336,7 +336,16 @@ class GoogleDriveSync:
         logger.info(f"[TimeSync] Starting time sync (UTC+{self.timezone_offset})...")
 
         # Check if running as root or with sudo capabilities
-        is_root = os.geteuid() == 0
+        # Cross-platform: use ctypes on Windows, geteuid on Unix
+        try:
+            if sys.platform == 'win32':
+                import ctypes
+                is_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            else:
+                is_root = os.geteuid() == 0
+        except (AttributeError, ImportError):
+            is_root = False
+        
         has_tty = sys.stdin.isatty()
 
         if not is_root:
